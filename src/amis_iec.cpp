@@ -14,6 +14,7 @@ namespace {
 constexpr uint8_t kSoh = 0x01, kStx = 0x02, kEtx = 0x03, kAckChar = 0x06;
 constexpr uint32_t kReplyDelayMs = 300;     // tr >= 200 ms before our reply
 constexpr uint32_t kIdentTimeoutMs = 2500;  // the meter answers within 1500 ms
+constexpr uint32_t kRepeatMs = 2000;        // repeat a request after 1500 ms < t <= 2200 ms (manual 5.2.4)
 constexpr uint32_t kStxTimeoutMs = 5000;
 constexpr uint32_t kCharTimeoutMs = 2000;   // ta < 1500 ms between two characters
 
@@ -39,6 +40,7 @@ const char kIecErr2[] AMIS_PROGMEM = "timeout";
 const char kIecErr3[] AMIS_PROGMEM = "block check character error";
 const char kIecErr4[] AMIS_PROGMEM = "data line too long or unreadable";
 const char kIecErr5[] AMIS_PROGMEM = "readout already running";
+const char kIecErr6[] AMIS_PROGMEM = "meter reported an error";
 const char kIecErrUnknown[] AMIS_PROGMEM = "?";
 }  // namespace
 
@@ -50,6 +52,7 @@ const char *error_str(IecReader::Error e) {
     case IecReader::Error::kBcc: return detail::pgm_str(kIecErr3);
     case IecReader::Error::kFormat: return detail::pgm_str(kIecErr4);
     case IecReader::Error::kBusy: return detail::pgm_str(kIecErr5);
+    case IecReader::Error::kMeterError: return detail::pgm_str(kIecErr6);
   }
   return detail::pgm_str(kIecErrUnknown);
 }
@@ -96,6 +99,8 @@ uint8_t IecReader::begin(Mode mode, uint32_t now_ms) {
   manufacturer_[0] = 0;
   ident_[0] = 0;
   ident_z_ = 0;
+  meter_error_[0] = 0;
+  requests_sent_ = 1;
   serial_[0] = 0;
   memset(&line_, 0, sizeof(line_));
   len_ = 0;
@@ -122,8 +127,10 @@ uint8_t IecReader::finish_ident_(uint32_t now_ms) {
     memcpy(tx_, brk, sizeof(brk));
     tx_len_ = sizeof(brk);
   } else {
-    char z = (baud_for_char(ident_z_) != 0) ? ident_z_ : '0';
-    if (baud_for_char(max_z_) != 0 && max_z_ < z) z = max_z_;
+    // The meter only switches if Z equals the code from its identification (manual 5.2.1), so either that
+    // code or '0' (300 Bd), never something in between
+    char z = '0';
+    if (baud_for_char(ident_z_) != 0 && baud_for_char(max_z_) != 0 && ident_z_ <= max_z_) z = ident_z_;
     const char ack[7] = {static_cast<char>(kAckChar), '0', z, '0', '\r', '\n', 0};
     set_tx_(ack);
     baud_ = baud_for_char(z);
@@ -149,11 +156,21 @@ uint8_t IecReader::handle_data_line_() {
     char *close2 = strchr(close + 2, ')');
     if (close2) copy_trim(line_.extra, sizeof(line_.extra), close + 2, static_cast<size_t>(close2 - close - 2));
   }
+  if (!line_.obis[0] && line_.value[0] == 'E' && line_.value[1] == 'R') {  // error telegram (ERxxxx)
+    strncpy(meter_error_, line_.value, sizeof(meter_error_) - 1);
+    meter_error_[sizeof(meter_error_) - 1] = 0;
+  }
   if (strcmp(line_.obis, "0.0.0") == 0) {  // device address = serial number
     strncpy(serial_, line_.value, sizeof(serial_) - 1);
     serial_[sizeof(serial_) - 1] = 0;
   }
   return kLine;
+}
+
+uint8_t IecReader::end_of_data_() {
+  if (meter_error_[0]) return fail_(Error::kMeterError);
+  state_ = State::kIdle;
+  return kDone;
 }
 
 uint8_t IecReader::push(uint8_t byte, uint32_t now_ms) {
@@ -194,8 +211,11 @@ uint8_t IecReader::push(uint8_t byte, uint32_t now_ms) {
     case State::kData:
       bcc_ ^= static_cast<uint8_t>(c);
       if (c == kEtx) {
+        // a line without CR LF before ETX, e.g. the error telegram STX (ERxxxx) ETX BCC
+        const uint8_t r = (len_ > 0) ? static_cast<uint8_t>(handle_data_line_() | kRawLine) : static_cast<uint8_t>(kNone);
+        len_ = 0;
         state_ = State::kWaitBcc;
-        return kNone;
+        return r;
       }
       if (c == '\n') {
         const uint8_t r = (len_ > 0) ? static_cast<uint8_t>(handle_data_line_() | kRawLine) : static_cast<uint8_t>(kNone);
@@ -209,8 +229,7 @@ uint8_t IecReader::push(uint8_t byte, uint32_t now_ms) {
 
     case State::kWaitBcc:
       if (static_cast<uint8_t>(c) != (bcc_ & 0x7F)) return fail_(Error::kBcc);
-      state_ = State::kIdle;
-      return kDone;
+      return end_of_data_();
 
     case State::kIdle:
       break;
@@ -224,6 +243,12 @@ uint8_t IecReader::poll(uint32_t now_ms) {
   const uint32_t in_state = now_ms - state_ms_;
   switch (state_) {
     case State::kWaitIdent:
+      if (requests_sent_ < request_tries_ && in_state > kRepeatMs && len_ == 0) {
+        // no answer: send the request again (tx_ still holds it)
+        requests_sent_++;
+        state_ms_ = now_ms;
+        return kSend;
+      }
       if (in_state > kIdentTimeoutMs) return fail_(Error::kNoIdent);
       break;
     case State::kSendAck:
@@ -239,8 +264,11 @@ uint8_t IecReader::poll(uint32_t now_ms) {
       if (in_state > kStxTimeoutMs) return fail_(Error::kTimeout);
       break;
     case State::kData:
-    case State::kWaitBcc:
       if (static_cast<uint32_t>(now_ms - last_rx_ms_) > kCharTimeoutMs) return fail_(Error::kTimeout);
+      break;
+    case State::kWaitBcc:
+      // the block check character is optional (manual 5.2.8): after ETX without BCC the data is complete
+      if (static_cast<uint32_t>(now_ms - last_rx_ms_) > kCharTimeoutMs) return end_of_data_();
       break;
     case State::kIdle:
       break;

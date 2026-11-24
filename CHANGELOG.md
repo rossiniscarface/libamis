@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1 – 2026-11-24
+
+Fixes in `IecReader` after checking against the Siemens TD-351x manual (D23-510-1.02, chapter 5.2):
+
+- **Baud rate:** the meter only switches if the acknowledgement repeats the code from its identification
+  (always “6” on the TD-351x). The old default (`'5'`, 9600) made libamis switch while the meter stayed at
+  300 baud, so a readout failed. Now only the meter's own code or `'0'` is used; the default is `'0'` (300 baud).
+- The request `/?!` is repeated (default 3 times, `set_request_tries()`), because the meter only wakes up its
+  IEC mode with the first received character.
+- Error telegrams `STX (ERxxxx) ETX BCC` end the readout with `Error::kMeterError`, code in `meter_error()`.
+  A line directly before ETX (without CR LF) is now processed.
+- A missing block check character after ETX is accepted (allowed by the manual).
+
 ## 0.2.0 – 2026-11-24
 
 - `IecReader`: `kRawLine` and `raw_line()` give every data line exactly as received (also the final `!`),

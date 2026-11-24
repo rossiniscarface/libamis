@@ -49,12 +49,18 @@ class IecReader {
     kRawLine = 1 << 5,    // raw_line() holds a data line as received (every non-empty line, also "!")
   };
 
-  enum class Error : uint8_t { kNone, kNoIdent, kTimeout, kBcc, kFormat, kBusy };
+  // kMeterError: the meter answered with an error telegram (ERxxxx), see meter_error()
+  enum class Error : uint8_t { kNone, kNoIdent, kTimeout, kBcc, kFormat, kBusy, kMeterError };
 
   // Highest wanted data baud rate as IEC code ('0'=300 ... '5'=9600, '6'=19200, '9'=115200).
-  // The minimum of this value and the one reported by the meter (TD-351x: '6') is used.
-  // Default '5' (9600). With '0' everything stays at 300 Bd (the billing data set then takes about 5-6 min).
+  // The meter only switches if the acknowledgement repeats exactly the code from its identification
+  // (Siemens manual 5.2.1; the TD-351x always reports '6' = 19200). So the code of the meter is used if it is
+  // not higher than this value, otherwise everything stays at 300 Bd. Default '0': always 300 Bd (proven,
+  // the billing data set then takes about 5-6 min). With '6' the TD-351x sends the data at 19200 Bd.
   void set_max_baud_char(char z) { max_z_ = z; }
+  // How often the request is sent if the meter does not answer (default 3). The TD-351x only wakes up its
+  // IEC mode with the first received character, so the request usually has to be repeated (manual 5.2.12.2).
+  void set_request_tries(uint8_t n) { request_tries_ = n ? n : 1; }
   // Device address for the request ("/?<address>!"), empty = general address
   void set_address(const char *addr);
   // Limit the total duration (default 120 s)
@@ -83,6 +89,8 @@ class IecReader {
   const char *manufacturer() const { return manufacturer_; }
   char baud_char() const { return ident_z_; }
   const char *identification() const { return ident_; }
+  // Error code of an error telegram from the meter, e.g. "ER0007" (manual 5.2.11), else empty
+  const char *meter_error() const { return meter_error_; }
   // Serial number: 0.0.0 from the data set (device address = serial number), else the identification
   const char *serial_number() const { return serial_[0] ? serial_ : ident_; }
 
@@ -93,12 +101,16 @@ class IecReader {
   uint8_t fail_(Error e);
   uint8_t finish_ident_(uint32_t now_ms);
   uint8_t handle_data_line_();
+  uint8_t end_of_data_();
   void set_tx_(const char *s);
 
   State state_ = State::kIdle;
   Mode mode_ = Mode::kReadout;
   Error error_ = Error::kNone;
-  char max_z_ = '5';  // 9600 Bd: proven, the IR head runs at 9600 on the M-Bus anyway
+  char max_z_ = '0';
+  uint8_t request_tries_ = 3;
+  uint8_t requests_sent_ = 0;
+  char meter_error_[9] = {0};
   char address_[33] = {0};
   uint32_t total_timeout_ms_ = 120000;
   uint32_t start_ms_ = 0;

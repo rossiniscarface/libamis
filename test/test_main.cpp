@@ -253,6 +253,7 @@ static void test_iec() {
   CHECK(r.error() == amis::IecReader::Error::kBusy);
 
   r = amis::IecReader();
+  r.set_max_baud_char('6');
   r.begin(amis::IecReader::Mode::kReadout, t);
   // Echo of our own request is ignored, then identification (parity bit set on '/' -> 0xAF)
   iec_feed(r, "/?!\r\n", &t);
@@ -260,13 +261,13 @@ static void test_iec() {
   CHECK(iec_feed(r, "SAT6AMIS2351102623000045\r\n", &t) == 0);
   CHECK(strcmp(r.manufacturer(), "SAT") == 0 && r.baud_char() == '6');
   CHECK(strcmp(r.identification(), "AMIS2351102623000045") == 0);
-  // Reply only after >= 200 ms, baud rate min(6, 5) = 9600
+  // Reply only after >= 200 ms. Z must be the meter's code '6' (allowed with max '6') -> 19200 Bd
   CHECK(r.poll(t + 100) == 0);
   t += 400;
   a = r.poll(t);
-  CHECK(a == (amis::IecReader::kSend | amis::IecReader::kSetSerial) && r.baud() == 9600);
+  CHECK(a == (amis::IecReader::kSend | amis::IecReader::kSetSerial) && r.baud() == 19200);
   tx = r.tx(&n);
-  CHECK(n == 6 && memcmp(tx, "\x06" "050\r\n", 6) == 0);
+  CHECK(n == 6 && memcmp(tx, "\x06" "060\r\n", 6) == 0);
 
   // Data block with BCC (XOR over everything after STX up to and including ETX)
   const char *block =
@@ -330,8 +331,55 @@ static void test_iec() {
   r4.begin(amis::IecReader::Mode::kIdentOnly, 0);
   tx = r4.tx(&n);
   CHECK(n == 21 && memcmp(tx, "/?2351102623000045!\r\n", 21) == 0);
-  CHECK(r4.poll(2000) == 0);
-  CHECK(r4.poll(3000) == amis::IecReader::kFailed && r4.error() == amis::IecReader::Error::kNoIdent);
+  // The request is repeated twice (manual 5.2.12.2), then the reader gives up
+  CHECK(r4.poll(1900) == 0);
+  CHECK(r4.poll(2100) == amis::IecReader::kSend);
+  tx = r4.tx(&n);
+  CHECK(n == 21 && tx[0] == '/');
+  CHECK(r4.poll(4200) == amis::IecReader::kSend);
+  CHECK(r4.poll(6300) == 0);
+  CHECK(r4.poll(6800) == amis::IecReader::kFailed && r4.error() == amis::IecReader::Error::kNoIdent);
+
+  // Default baud rate: the meter reports '6' but the default max is '0' -> "ACK 0 0 0", stays at 300 Bd.
+  // Something in between (e.g. '5') would never be used: the meter only switches if Z matches.
+  const char maxzs[2] = {'\0', '5'};
+  for (char maxz : maxzs) {
+    amis::IecReader r5;
+    t = 0;
+    if (maxz) r5.set_max_baud_char(maxz);
+    r5.begin(amis::IecReader::Mode::kReadout, t);
+    iec_feed(r5, "/SAT6X\r\n", &t);
+    t += 400;
+    a = r5.poll(t);
+    tx = r5.tx(&n);
+    CHECK(a == amis::IecReader::kSend && r5.baud() == 300 && n == 6 && memcmp(tx, "\x06" "000\r\n", 6) == 0);
+  }
+
+  // Error telegram from the meter: STX (ER0007) ETX BCC, without CR LF before ETX
+  amis::IecReader r6;
+  t = 0;
+  r6.begin(amis::IecReader::Mode::kReadout, t);
+  iec_feed(r6, "/SAT6X\r\n", &t);
+  t += 400;
+  r6.poll(t);
+  r6.push(0x02, t++);
+  a = iec_feed(r6, "(ER0007)\x03", &t);
+  CHECK((a & amis::IecReader::kRawLine) && !strcmp(r6.raw_line(), "(ER0007)"));
+  const uint8_t bcc6 = static_cast<uint8_t>('(' ^ 'E' ^ 'R' ^ '0' ^ '0' ^ '0' ^ '7' ^ ')' ^ 0x03);
+  CHECK(r6.push(bcc6, t++) == amis::IecReader::kFailed && r6.error() == amis::IecReader::Error::kMeterError);
+  CHECK(!strcmp(r6.meter_error(), "ER0007"));
+
+  // Block check character missing (allowed, manual 5.2.8): done after the character timeout
+  amis::IecReader r7;
+  t = 0;
+  r7.begin(amis::IecReader::Mode::kReadout, t);
+  iec_feed(r7, "/SAT6X\r\n", &t);
+  t += 400;
+  r7.poll(t);
+  r7.push(0x02, t++);
+  iec_feed(r7, "0.0.0(42)\r\n!\r\n\x03", &t);
+  CHECK(r7.poll(t + 1000) == 0 && r7.active());
+  CHECK(r7.poll(t + 2100) == amis::IecReader::kDone && !strcmp(r7.serial_number(), "42"));
 }
 
 int main() {

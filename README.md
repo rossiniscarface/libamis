@@ -20,7 +20,7 @@ No heap, no exceptions, no RTTI, no Arduino dependency, C++17. Small RAM footpri
 texts stay in flash, and `-DLIBAMIS_MAX_FRAME=128` shrinks the frame buffer to what the AMIS needs. Builds for **ESP8266**, **ESP32** (ESP32, S3, C3,
 C6, …), other microcontrollers and the PC.
 
-**Status:** version 0.2.0. Tested on the PC (including the example telegram from the Netz OÖ specification) and
+**Status:** version 0.2.1. Tested on the PC (including the example telegram from the Netz OÖ specification) and
 built for ESP8266, ESP32, ESP32-S3, ESP32-C3 and ESP32-C6. On an ESP8266 it runs inside a
 [fork of the ESP8266 firmware](https://github.com/rossiniscarface/amis_smartmeter_reader/tree/libamis), checked
 against a simulated meter. **Not yet tested on a real meter** — feedback is welcome. Protocol details: [docs/protocol.md](docs/protocol.md), changes: [CHANGELOG.md](CHANGELOG.md).
@@ -72,8 +72,13 @@ More: `online(now_ms)`, `stats()` (frames, acknowledgements, errors), `last_plai
   break. Takes about 1 s.
 - `Mode::kReadout`: complete billing data set (among others 0.0.0 serial number, tariff registers 1.8.1–1.8.6,
   1.6.0/2.6.0 quarter-hour maximum demand current and previous periods, voltages/currents 32.7/31.7 …,
-  historic values). Data is read at 9600 baud by default (`set_max_baud_char('0')` keeps everything at
-  300 baud, which then takes about 5–6 min).
+  historic values). By default everything runs at 300 baud and takes about 5–6 min. The meter only switches
+  to a faster rate if the acknowledgement repeats the code from its identification (TD-351x: “6” = 19200),
+  so `set_max_baud_char('6')` is the only faster option.
+
+The request is repeated up to 3 times, because the meter only wakes up its IEC mode with the first received
+character. An error telegram of the meter (`ERxxxx`) ends the readout with `Error::kMeterError` and
+`meter_error()`; a missing block check character is accepted.
 
 ```cpp
 amis::IecReader iec;
@@ -94,7 +99,7 @@ again (search mode).
 
 ## Integration
 
-- **PlatformIO:** `lib_deps = https://github.com/rossiniscarface/libamis.git#v0.2.0` (see `library.json`)
+- **PlatformIO:** `lib_deps = https://github.com/rossiniscarface/libamis.git#v0.2.1` (see `library.json`)
 - **Arduino IDE:** copy the folder to `libraries/`, `#include <amis.h>`; examples in
   [`examples/esp8266_arduino`](examples/esp8266_arduino) and [`examples/esp32_arduino`](examples/esp32_arduino)
 - **ESP-IDF:** put the folder under `components/` (the `CMakeLists.txt` detects ESP-IDF); example in

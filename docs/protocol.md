@@ -132,14 +132,24 @@ class (`amis::IecReader`), use at your own responsibility. While it runs, the cu
 
 - Always starts at **300 baud, 7E1**.
 - Request `/?` [device address] `!` CR LF. The device address is the serial number; without an address every
-  meter answers.
-- Identification `/XXXZ<identification>` CR LF: XXX = “SAT”, Z = baud rate code (TD-351x reports “6” =
-  19200), identification = “SAT” + part number, e.g. 2351102623000045 for G23-511--.02/623-000045.
+  meter answers. The optical port normally runs at the “web” baud rate and only switches to IEC 62056-21 with
+  the first received character, so the request has to be **repeated** (manual 5.2.12.2). Wait
+  1500–2200 ms before repeating (5.2.4); libamis sends it up to 3 times.
+- Identification `/XXXZ<identification>` CR LF: XXX = “SAT”, Z = baud rate code (TD-351x always reports
+  “6” = 19200 for compatibility, 5.2.1), identification = part number, e.g. 2351102623000045 for
+  G23-511--.02/623-000045 (5.2.7), at most 16 characters (5.2.8.2).
 - Reply at the earliest 200 ms, at the latest 1500 ms after a telegram. Less than 1500 ms between two characters.
-- Data readout: `ACK 0 Z 0` CR LF, then (if Z matches) switch to the Z baud rate. The meter sends
-  `STX` data lines `!` CR LF `ETX BCC`. BCC = XOR over everything after STX up to and including ETX.
+- Data readout: `ACK 0 Z 0` CR LF. The meter switches to the Z baud rate **only if Z equals the code from its
+  identification**; with any other Z (or a broken or missing acknowledgement) it stays at 300 baud (5.2.1).
+  So only “0” or the meter's own code make sense; libamis never sends anything in between. The meter sends
+  `STX` data lines `!` CR LF `ETX BCC`. BCC = XOR over everything after STX up to and including ETX
+  (ISO 1155); the BCC may also be missing (5.2.8).
 - Without acknowledgement the meter sends the data at 300 baud after the timeout. Abort with break
-  `SOH B 0 ETX BCC`.
+  `SOH B 0 ETX BCC` (5.2.8.12); a few data bytes may still follow a break (5.2.12.4).
+- Errors come as `STX (ERxxxx) ETX BCC`, e.g. ER0001 unknown command, ER0002 error in data field, ER0005 cannot
+  be executed now, ER0007 security level too low, ER0009 communication locked (5.2.11).
+- After a readout the port stays at 300 baud for 15 s before it returns to the web baud rate (5.2.12.5); the
+  inactivity timeout is 10 s instead of the 60–120 s of the standard (5.2.13.1).
 - Data lines: `OBIS(value*unit)` and optionally `(timestamp)`. The billing data set contains among others
   F.F, 0.0.0 (serial number), 1.128.0, 1.8.0–1.8.6 and 2.8.0–2.8.6 with previous periods (`.Vw`), 1.6.0/2.6.0
   (maximum demand), 3.8.1/4.8.1, 1.7.0–4.7.0, voltages/currents/angles (32.7, 52.7, 72.7, 31.7, 51.7, 71.7,
@@ -150,7 +160,8 @@ class (`amis::IecReader`), use at your own responsibility. While it runs, the cu
 ## 9. Sources
 
 - Netz OÖ: *Technische Spezifikation AMIS-Zähler Kundenschnittstelle*, 2021-11-05 (German)
-- Siemens: *AMIS TD-351x Benutzerhandbuch*, D23-510-1.02 (German; e.g. in the repository
+- Siemens: *AMIS TD-351x Benutzerhandbuch*, D23-510-1.02, 2008-12-04 (German; chapter 5.2 is the IEC 62056-21
+  service interface, chapter 6 is about the M-Bus extension module, not the customer interface; e.g. in the repository
   [mgerhard74/amis_smartmeter_reader](https://github.com/mgerhard74/amis_smartmeter_reader) under `Docs/`)
 - EN 13757-2/-3 (M-Bus), OMS Specification Vol. 2 Issue 3.0.1, IEC 62056-21
 - FIPS-197 (AES), NIST SP 800-38A (CBC test vectors)
