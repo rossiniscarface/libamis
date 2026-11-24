@@ -1,0 +1,124 @@
+// SPDX-License-Identifier: MIT
+// libamis - OPTIONAL: readout via the service interface per IEC 62056-21 (mode C, data readout only).
+//
+// Note: The Netz OOe customer interface specification (2021-11-05) only describes the M-Bus protocol and
+// limits the answers of the M-Bus slave to E5 (section 2.3.10). It does not cover an IEC 62056-21 readout;
+// Netz OOe uses the optical port as its service interface as well (section 4). Use at your own
+// responsibility. While a readout runs, the meter sends no M-Bus data (up to about 1 min afterwards, until
+// it has found the M-Bus slave again). Nothing is sent until begin() is called. With -DLIBAMIS_NO_IEC this
+// part is not compiled.
+//
+// Sequence (Siemens TD-351x user manual D23-510-1.02, section 5.2):
+//   300 Bd 7E1:  -> "/?!" CR LF            <- "/SAT6<identification>" CR LF
+//   kIdentOnly:  -> break (SOH B0 ETX BCC), done. Yields manufacturer and identification (part/serial number).
+//   kReadout:    -> ACK "0" Z "0" CR LF (Z = baud rate), then switch to Z baud
+//                <- STX "0.0.0(...)" CR LF ... "!" CR LF ETX BCC  (billing data set, line by line)
+// Afterwards switch back to 9600 8E1 and reset the M-Bus reader. During the readout the meter sends no
+// M-Bus data; it may take up to about 1 min until it sends again (search mode).
+//
+// The class does NOT touch hardware. It says what to do (send, change baud rate) and gets received
+// bytes via push(). Timing via poll(now_ms).
+#pragma once
+
+#ifndef LIBAMIS_NO_IEC
+
+#include <stddef.h>
+#include <stdint.h>
+
+namespace amis {
+
+// One data line, e.g. 1.8.0(001234.567*kWh) oder 1.6.0(01.234*kW)(2611231445)
+struct IecLine {
+  char obis[20];
+  char value[32];
+  char unit[8];
+  char extra[32];  // content of a second bracket (e.g. timestamp), else empty
+};
+
+class IecReader {
+ public:
+  enum class Mode : uint8_t { kIdentOnly, kReadout };
+
+  enum Action : uint8_t {
+    kNone = 0,
+    kSend = 1 << 0,       // send tx() (then flush before changing the baud rate!)
+    kSetSerial = 1 << 1,  // switch the UART to baud() with 7E1 (AFTER sending tx())
+    kLine = 1 << 2,       // line() holds a new data line
+    kDone = 1 << 3,       // done -> UART back to 9600 8E1, amis::Reader::reset()
+    kFailed = 1 << 4,     // aborted, error() tells why -> also back to 9600 8E1
+  };
+
+  enum class Error : uint8_t { kNone, kNoIdent, kTimeout, kBcc, kFormat, kBusy };
+
+  // Highest wanted data baud rate as IEC code ('0'=300 ... '5'=9600, '6'=19200, '9'=115200).
+  // The minimum of this value and the one reported by the meter (TD-351x: '6') is used.
+  // Default '5' (9600). With '0' everything stays at 300 Bd (the billing data set then takes about 5-6 min).
+  void set_max_baud_char(char z) { max_z_ = z; }
+  // Device address for the request ("/?<address>!"), empty = general address
+  void set_address(const char *addr);
+  // Limit the total duration (default 120 s)
+  void set_total_timeout_ms(uint32_t ms) { total_timeout_ms_ = ms; }
+
+  // Starts the readout. Returns kSetSerial (300 Bd 7E1) | kSend ("/?!")
+  uint8_t begin(Mode mode, uint32_t now_ms);
+  // Received byte (the parity bit is ignored)
+  uint8_t push(uint8_t byte, uint32_t now_ms);
+  // Call regularly (e.g. in loop()): delayed sending, timeouts
+  uint8_t poll(uint32_t now_ms);
+  void abort();
+
+  bool active() const { return state_ != State::kIdle; }
+  const uint8_t *tx(size_t *len) const {
+    *len = tx_len_;
+    return tx_;
+  }
+  uint32_t baud() const { return baud_; }
+  const IecLine &line() const { return line_; }
+  Error error() const { return error_; }
+
+  // Result of the identification, e.g. "SAT" / '6' / "2351102623000045"
+  const char *manufacturer() const { return manufacturer_; }
+  char baud_char() const { return ident_z_; }
+  const char *identification() const { return ident_; }
+  // Serial number: 0.0.0 from the data set (device address = serial number), else the identification
+  const char *serial_number() const { return serial_[0] ? serial_ : ident_; }
+
+  static uint32_t baud_for_char(char z);
+
+ private:
+  enum class State : uint8_t { kIdle, kWaitIdent, kSendAck, kWaitStx, kData, kWaitBcc };
+  uint8_t fail_(Error e);
+  uint8_t finish_ident_(uint32_t now_ms);
+  uint8_t handle_data_line_();
+  void set_tx_(const char *s);
+
+  State state_ = State::kIdle;
+  Mode mode_ = Mode::kReadout;
+  Error error_ = Error::kNone;
+  char max_z_ = '5';  // 9600 Bd: proven, the IR head runs at 9600 on the M-Bus anyway
+  char address_[33] = {0};
+  uint32_t total_timeout_ms_ = 120000;
+  uint32_t start_ms_ = 0;
+  uint32_t last_rx_ms_ = 0;
+  uint32_t state_ms_ = 0;
+  uint32_t baud_ = 300;
+
+  uint8_t tx_[40];
+  size_t tx_len_ = 0;
+
+  char buf_[96];
+  size_t len_ = 0;
+  uint8_t bcc_ = 0;
+
+  char manufacturer_[4] = {0};
+  char ident_z_ = 0;
+  char ident_[33] = {0};
+  char serial_[33] = {0};
+  IecLine line_;
+};
+
+const char *error_str(IecReader::Error e);
+
+}  // namespace amis
+
+#endif  // LIBAMIS_NO_IEC

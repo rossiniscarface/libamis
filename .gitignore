@@ -1,0 +1,6 @@
+amis_test
+amis_test_san
+build/
+.pio/
+*.o
+CLAUDE.md

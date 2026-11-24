@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MIT
+# Usable as an ESP-IDF component (components/libamis) or for a host build.
+if(ESP_PLATFORM)
+  idf_component_register(SRCS "src/amis_aes128.cpp" "src/amis_reader.cpp" "src/amis_iec.cpp" INCLUDE_DIRS "src")
+else()
+  cmake_minimum_required(VERSION 3.16)
+  project(libamis CXX)
+  set(CMAKE_CXX_STANDARD 17)
+  add_library(amis src/amis_aes128.cpp src/amis_reader.cpp src/amis_iec.cpp)
+  target_include_directories(amis PUBLIC src)
+  add_executable(amis_test test/test_main.cpp)
+  target_link_libraries(amis_test amis)
+  enable_testing()
+  add_test(NAME amis_test COMMAND amis_test)
+endif()

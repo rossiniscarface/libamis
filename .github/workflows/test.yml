@@ -1,0 +1,66 @@
+name: test
+# Runs only for pull requests, release tags and on demand (Actions tab -> Run workflow), not on every push,
+# to save Actions minutes while the repository is private.
+on:
+  pull_request:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cxx: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Tests
+        run: make -C test CXX=${{ matrix.cxx }}
+      - name: Sanitizer
+        run: make -C test sanitize CXX=${{ matrix.cxx }}
+      - name: Without IEC part
+        run: ${{ matrix.cxx }} -std=c++17 -Wall -Wextra -Werror -DLIBAMIS_NO_IEC -Isrc -c src/*.cpp
+      - name: CMake
+        run: |
+          cmake -B build -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          cmake --build build
+          ctest --test-dir build --output-on-failure
+
+  mcu:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [esp8266, esp32, esp32s3, esp32c3, esp32c6_idf, esp32_idf]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ matrix.env }}-${{ hashFiles('ci/platformio.ini') }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install PlatformIO
+        run: pip install platformio
+      - name: Build
+        run: pio run -d ci -e ${{ matrix.env }}
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Validate PlatformIO manifest
+        run: |
+          pip install platformio
+          pio pkg pack -o /tmp
+      - name: Arduino lint
+        # checks that the url in library.properties is reachable, so only once the repository is public
+        if: ${{ !github.event.repository.private }}
+        uses: arduino/arduino-lint-action@v2
+        with:
+          library-manager: submit
+          compliance: strict
