@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 – 2026-11-24
 
 - `IecReader`: `kRawLine` and `raw_line()` give every data line exactly as received (also the final `!`),
   e.g. to store the billing data set as a file.
