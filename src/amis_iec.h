@@ -61,6 +61,19 @@ class IecReader {
   // How often the request is sent if the meter does not answer (default 3). The TD-351x only wakes up its
   // IEC mode with the first received character, so the request usually has to be repeated (manual 5.2.12.2).
   void set_request_tries(uint8_t n) { request_tries_ = n ? n : 1; }
+  // Pause between two requests without answer (default 5000 ms). A real TD-351x did not answer requests
+  // 2 s apart (the 1500..2200 ms of the manual), but does with 5 s like the original firmware.
+  void set_request_interval_ms(uint32_t ms) { request_interval_ms_ = ms; }
+  // Delay between the identification and our acknowledgement or break (default 700 ms; the manual allows
+  // 200..1500 ms, a real TD-351x answered ER0007 to an acknowledgement after 300 ms).
+  void set_reply_delay_ms(uint32_t ms) { reply_delay_ms_ = ms; }
+  // How often the acknowledgement is sent if the meter answers it with an error telegram or sends no data
+  // (default 3), and the time between two acknowledgements (default 7000 ms, like the original firmware)
+  void set_ack_tries(uint8_t n) { ack_tries_ = n ? n : 1; }
+  void set_ack_retry_ms(uint32_t ms) { ack_retry_ms_ = ms; }
+  // Readout without acknowledgement (manual fig. 5-1): after the identification nothing is sent, the meter sends
+  // the data at 300 Bd by itself after its timeout.
+  void set_send_ack(bool on) { send_ack_ = on; }
   // Device address for the request ("/?<address>!"), empty = general address
   void set_address(const char *addr);
   // Limit the total duration (default 120 s)
@@ -103,6 +116,7 @@ class IecReader {
   uint8_t finish_ident_(uint32_t now_ms);
   uint8_t handle_data_line_();
   uint8_t end_of_data_();
+  uint8_t data_line_();
   void set_tx_(const char *s);
 
   State state_ = State::kIdle;
@@ -110,6 +124,15 @@ class IecReader {
   Error error_ = Error::kNone;
   char max_z_ = '0';
   uint8_t request_tries_ = 3;
+  uint32_t request_interval_ms_ = 5000;
+  uint32_t reply_delay_ms_ = 700;
+  uint8_t ack_tries_ = 3;
+  uint32_t ack_retry_ms_ = 7000;
+  uint32_t ack_ms_ = 0;
+  uint32_t wait_ms_ = 0;
+  bool send_ack_ = true;
+  bool no_stx_ = false;  // data block started without STX (no block check)
+  uint8_t acks_sent_ = 0;
   uint8_t requests_sent_ = 0;
   char meter_error_[9] = {0};
   char address_[33] = {0};

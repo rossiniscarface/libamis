@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.2 – 2026-11-24
+
+`IecReader` adapted to a real TD-3511 (behaviour captured with a RAM trace, see docs/protocol.md):
+
+- The request is repeated every 5 s (`set_request_interval_ms()`, before 2 s): the meter only answers after it has
+  left the M-Bus session, about 10 s after the last `E5`. After a broken answer the request is sent again.
+- The acknowledgement follows the identification after 700 ms (`set_reply_delay_ms()`).
+- If the meter answers the acknowledgement with an error telegram or sends no data, the acknowledgement is sent
+  again 7 s later, up to 3 times (`set_ack_tries()`, `set_ack_retry_ms()`), like the original firmware. A real
+  TD-3511 always refuses the first one with `ER0007`.
+- Data without STX is accepted (the meter sends it that way after the repeated acknowledgement); the block check
+  character is not checked then.
+- Error telegrams are recognised with and without brackets (`ER0007`), and they are no longer reported as data
+  lines (`kRawLine`).
+- Waiting for the data after the acknowledgement: 7 s per acknowledgement; without acknowledgement
+  (`set_send_ack(false)`, manual fig. 5-1) 12 s.
+
 ## 0.2.1 – 2026-11-24
 
 Fixes in `IecReader` after checking against the Siemens TD-351x manual (D23-510-1.02, chapter 5.2):

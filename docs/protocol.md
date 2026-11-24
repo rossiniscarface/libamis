@@ -133,8 +133,8 @@ class (`amis::IecReader`), use at your own responsibility. While it runs, the cu
 - Always starts at **300 baud, 7E1**.
 - Request `/?` [device address] `!` CR LF. The device address is the serial number; without an address every
   meter answers. The optical port normally runs at the “web” baud rate and only switches to IEC 62056-21 with
-  the first received character, so the request has to be **repeated** (manual 5.2.12.2). Wait
-  1500–2200 ms before repeating (5.2.4); libamis sends it up to 3 times.
+  the first received character, so the request has to be **repeated** (manual 5.2.12.2). The manual says to wait
+  1500–2200 ms before repeating (5.2.4); libamis waits 5 s and sends it up to 3 times (see below why).
 - Identification `/XXXZ<identification>` CR LF: XXX = “SAT”, Z = baud rate code (TD-351x always reports
   “6” = 19200 for compatibility, 5.2.1), identification = part number, e.g. 2351102623000045 for
   G23-511--.02/623-000045 (5.2.7), at most 16 characters (5.2.8.2).
@@ -154,6 +154,30 @@ class (`amis::IecReader`), use at your own responsibility. While it runs, the cu
   F.F, 0.0.0 (serial number), 1.128.0, 1.8.0–1.8.6 and 2.8.0–2.8.6 with previous periods (`.Vw`), 1.6.0/2.6.0
   (maximum demand), 3.8.1/4.8.1, 1.7.0–4.7.0, voltages/currents/angles (32.7, 52.7, 72.7, 31.7, 51.7, 71.7,
   81.7.x), frequency 14.7 and C.x status registers.
+### Behaviour of a real TD-3511 (Netz OÖ, captured 2026-11-24)
+
+Measured with a RAM trace on a reader at a real meter; it differs from the manual in several points:
+
+| Step | Reader → | ← Meter |
+|---|---|---|
+| 0 s | `/?!` | nothing useful: the meter keeps sending its M-Bus frames for about 10 s (no more `E5`) |
+| 5 s | `/?!` | (M-Bus frames) |
+| 10 s | `/?!` | `/SAT6TEST000000000001` CR LF, about 0.4 s later |
+| +0.7 s | `ACK 0 0 0` CR LF | `STX ER0007 ETX BCC` — **without brackets** |
+| +7 s | `ACK 0 0 0` CR LF (again) | the billing data set, **without STX**, starting with `F.F(`, **without the final `!` line**, ending with `ETX` and one more byte |
+
+- The meter only answers the request after it has given up the M-Bus session (10 missing `E5`, then search
+  mode), i.e. about 10 s after the reader stopped acknowledging. Requests must therefore be spread over more than
+  10 s.
+- The first acknowledgement is always refused with `ER0007`, the repeated one 7 s later is accepted. The original
+  ESP8266 firmware works the same way without noticing: it ignores everything but `F.F(` and repeats the
+  acknowledgement after 7 s.
+- Without STX there is no defined start for the block check character, so libamis does not check it then.
+- In some readouts at that meter a single character at the start of a line was missing (1–2 per 12 KB). With the
+  same data from a simulated meter nothing was lost, so this looks like a transmission problem on the optical
+  link, but it is not proven.
+- The whole data set (about 12 KB, 379 lines) takes about 7 minutes at 300 baud; no M-Bus data during that time.
+
 - Codes for Z: 0 = 300, 1 = 600, 2 = 1200, 3 = 2400, 4 = 4800, 5 = 9600, 6 = 19200, 9 = 115200.
 - libamis **never** uses programming or manufacturer specific modes (`ACK 0 Z 1/6/7`).
 

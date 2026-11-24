@@ -264,7 +264,8 @@ static void test_iec() {
   CHECK(strcmp(r.identification(), "AMIS2351102623000045") == 0);
   // Reply only after >= 200 ms. Z must be the meter's code '6' (allowed with max '6') -> 19200 Bd
   CHECK(r.poll(t + 100) == 0);
-  t += 400;
+  CHECK(r.poll(t + 600) == 0);  // default reply delay 700 ms
+  t += 800;
   a = r.poll(t);
   CHECK(a == (amis::IecReader::kSend | amis::IecReader::kSetSerial) && r.baud() == 19200);
   tx = r.tx(&n);
@@ -303,7 +304,7 @@ static void test_iec() {
   r2.set_max_baud_char('0');
   r2.begin(amis::IecReader::Mode::kReadout, t);
   iec_feed(r2, "/SAT6X\r\n", &t);
-  t += 400;
+  t += 800;
   a = r2.poll(t);
   CHECK(a == amis::IecReader::kSend && r2.baud() == 300);  // stays at 300 Bd, no switch
   tx = r2.tx(&n);
@@ -318,7 +319,7 @@ static void test_iec() {
   r3.begin(amis::IecReader::Mode::kIdentOnly, t);
   iec_feed(r3, "/SAT6123456789\r\n", &t);
   CHECK(r3.poll(t) == 0);
-  t += 400;
+  t += 800;
   a = r3.poll(t);
   CHECK(a == (amis::IecReader::kSend | amis::IecReader::kDone) && !r3.active());
   tx = r3.tx(&n);
@@ -333,14 +334,25 @@ static void test_iec() {
   tx = r4.tx(&n);
   CHECK(n == 21 && memcmp(tx, "/?2351102623000045!\r\n", 21) == 0);
   CHECK(r4.poll(0) == amis::IecReader::kSend);
-  // The request is repeated twice (manual 5.2.12.2), then the reader gives up
-  CHECK(r4.poll(1900) == 0);
-  CHECK(r4.poll(2100) == amis::IecReader::kSend);
+  // The request is repeated twice every 5 s (manual 5.2.12.2), then the reader gives up 2.5 s later
+  CHECK(r4.poll(4900) == 0);
+  CHECK(r4.poll(5100) == amis::IecReader::kSend);
   tx = r4.tx(&n);
   CHECK(n == 21 && tx[0] == '/');
-  CHECK(r4.poll(4200) == amis::IecReader::kSend);
-  CHECK(r4.poll(6300) == 0);
-  CHECK(r4.poll(6800) == amis::IecReader::kFailed && r4.error() == amis::IecReader::Error::kNoIdent);
+  CHECK(r4.poll(10200) == amis::IecReader::kSend);
+  CHECK(r4.poll(12600) == 0 && r4.active());
+  CHECK(r4.poll(12800) == amis::IecReader::kFailed && r4.error() == amis::IecReader::Error::kNoIdent);
+
+  // Interval can be set; an incomplete answer is dropped and the request sent again
+  amis::IecReader r4b;
+  r4b.set_request_interval_ms(2000);
+  r4b.begin(amis::IecReader::Mode::kIdentOnly, 0);
+  r4b.poll(0);
+  t = 100;
+  iec_feed(r4b, "/SAT6123", &t);
+  CHECK(r4b.poll(2200) == amis::IecReader::kSend);
+  iec_feed(r4b, "/SAT6ABC\r\n", &t);
+  CHECK(strcmp(r4b.identification(), "ABC") == 0);
 
   // Default baud rate: the meter reports '6' but the default max is '0' -> "ACK 0 0 0", stays at 300 Bd.
   // Something in between (e.g. '5') would never be used: the meter only switches if Z matches.
@@ -351,7 +363,7 @@ static void test_iec() {
     if (maxz) r5.set_max_baud_char(maxz);
     r5.begin(amis::IecReader::Mode::kReadout, t);
     iec_feed(r5, "/SAT6X\r\n", &t);
-    t += 400;
+    t += 800;
     a = r5.poll(t);
     tx = r5.tx(&n);
     CHECK(a == amis::IecReader::kSend && r5.baud() == 300 && n == 6 && memcmp(tx, "\x06" "000\r\n", 6) == 0);
@@ -359,24 +371,107 @@ static void test_iec() {
 
   // Error telegram from the meter: STX (ER0007) ETX BCC, without CR LF before ETX
   amis::IecReader r6;
+  r6.set_ack_tries(1);
   t = 0;
   r6.begin(amis::IecReader::Mode::kReadout, t);
   iec_feed(r6, "/SAT6X\r\n", &t);
-  t += 400;
+  t += 800;
   r6.poll(t);
   r6.push(0x02, t++);
   a = iec_feed(r6, "(ER0007)\x03", &t);
-  CHECK((a & amis::IecReader::kRawLine) && !strcmp(r6.raw_line(), "(ER0007)"));
+  CHECK(!(a & amis::IecReader::kRawLine));  // an error telegram is no data line
   const uint8_t bcc6 = static_cast<uint8_t>('(' ^ 'E' ^ 'R' ^ '0' ^ '0' ^ '0' ^ '7' ^ ')' ^ 0x03);
   CHECK(r6.push(bcc6, t++) == amis::IecReader::kFailed && r6.error() == amis::IecReader::Error::kMeterError);
   CHECK(!strcmp(r6.meter_error(), "ER0007"));
+
+  // ... and without brackets, as a real TD-351x sends it: STX ER0007 ETX BCC
+  amis::IecReader r6b;
+  r6b.set_ack_tries(1);
+  t = 0;
+  r6b.begin(amis::IecReader::Mode::kReadout, t);
+  iec_feed(r6b, "/SAT6X\r\n", &t);
+  t += 800;
+  r6b.poll(t);
+  r6b.push(0x02, t++);
+  a = iec_feed(r6b, "ER0007\x03", &t);
+  CHECK(!(a & amis::IecReader::kRawLine));
+  const uint8_t bcc6b = static_cast<uint8_t>('E' ^ 'R' ^ '0' ^ '0' ^ '0' ^ '7' ^ 0x03);
+  CHECK(r6b.push(bcc6b, t++) == amis::IecReader::kFailed && !strcmp(r6b.meter_error(), "ER0007"));
+
+  // Real TD-351x: the first acknowledgement is answered with ER0007, the repeated one (7 s later) with the data
+  {
+    amis::IecReader r9;
+    t = 0;
+    r9.begin(amis::IecReader::Mode::kReadout, t);
+    iec_feed(r9, "/SAT6TEST000000000001\r\n", &t);
+    t += 800;
+    CHECK(r9.poll(t) == amis::IecReader::kSend);  // ACK 0 0 0
+    const uint32_t t_ack = t;
+    r9.push(0x02, t++);
+    iec_feed(r9, "ER0007\x03", &t);
+    a = r9.push(static_cast<uint8_t>('E' ^ 'R' ^ '0' ^ '0' ^ '0' ^ '7' ^ 0x03), t++);
+    CHECK(a == 0 && r9.active());
+    CHECK(r9.poll(t_ack + 6900) == 0);
+    CHECK(r9.poll(t_ack + 7100) == amis::IecReader::kSend);  // ACK again
+    tx = r9.tx(&n);
+    CHECK(n == 6 && tx[0] == 0x06);
+    t = t_ack + 8000;
+    r9.push(0x02, t++);  // (test 1: with STX)
+    int raw = 0;
+    const char *data = "F.F(00000000)\r\n0.0.0(003080207)(00-00-00 00:00)\r\n\x03";
+    uint8_t bcc9 = 0;
+    for (const char *p = data; *p; p++) {
+      bcc9 ^= static_cast<uint8_t>(*p);
+      if (r9.push(static_cast<uint8_t>(*p), t++) & amis::IecReader::kRawLine) raw++;
+    }
+    CHECK(raw == 2 && r9.push(bcc9, t++) == amis::IecReader::kDone && !strcmp(r9.serial_number(), "003080207"));
+  }
+  // As captured on a real TD-3511: after the repeated acknowledgement the data comes WITHOUT STX,
+  // starting with "F.F(", ending with ETX and a byte that is no valid BCC for that block
+  {
+    amis::IecReader r11;
+    t = 0;
+    r11.begin(amis::IecReader::Mode::kReadout, t);
+    iec_feed(r11, "/SAT6TEST000000000001\r\n", &t);
+    t += 800;
+    CHECK(r11.poll(t) == amis::IecReader::kSend);
+    const uint32_t t_ack = t;
+    r11.push(0x02, t++);
+    iec_feed(r11, "ER0007\x03\x13", &t);  // BCC 0x13 as sent by the meter
+    CHECK(r11.active() && r11.poll(t_ack + 7100) == amis::IecReader::kSend);
+    t = t_ack + 7500;
+    int raw = 0;
+    bool saw_ff = false;
+    for (const char *p = "F.F(00000000)\r\n0.0.0(003080207)(00-00-00 00:00)\r\n\x03"; *p; p++) {
+      if (r11.push(static_cast<uint8_t>(*p), t++) & amis::IecReader::kRawLine) {
+        raw++;
+        if (!strcmp(r11.raw_line(), "F.F(00000000)")) saw_ff = true;
+      }
+    }
+    CHECK(raw == 2 && saw_ff);
+    CHECK(r11.push(0x55, t++) == amis::IecReader::kDone);  // any byte after ETX: no BCC check without STX
+    CHECK(r11.poll(t + 8000) == 0 && !r11.active());       // and no further acknowledgement
+  }
+
+  // No data after the acknowledgement: it is repeated every 7 s, three times in all, then timeout
+  {
+    amis::IecReader r10;
+    t = 0;
+    r10.begin(amis::IecReader::Mode::kReadout, t);
+    iec_feed(r10, "/SAT6X\r\n", &t);
+    t += 800;
+    CHECK(r10.poll(t) == amis::IecReader::kSend);
+    CHECK(r10.poll(t + 7100) == amis::IecReader::kSend);
+    CHECK(r10.poll(t + 14200) == amis::IecReader::kSend);
+    CHECK(r10.poll(t + 21300) == amis::IecReader::kFailed && r10.error() == amis::IecReader::Error::kTimeout);
+  }
 
   // Block check character missing (allowed, manual 5.2.8): done after the character timeout
   amis::IecReader r7;
   t = 0;
   r7.begin(amis::IecReader::Mode::kReadout, t);
   iec_feed(r7, "/SAT6X\r\n", &t);
-  t += 400;
+  t += 800;
   r7.poll(t);
   r7.push(0x02, t++);
   iec_feed(r7, "0.0.0(42)\r\n!\r\n\x03", &t);

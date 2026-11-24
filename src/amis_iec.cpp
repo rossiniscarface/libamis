@@ -12,10 +12,8 @@ namespace amis {
 
 namespace {
 constexpr uint8_t kSoh = 0x01, kStx = 0x02, kEtx = 0x03, kAckChar = 0x06;
-constexpr uint32_t kReplyDelayMs = 300;     // tr >= 200 ms before our reply
 constexpr uint32_t kIdentTimeoutMs = 2500;  // the meter answers within 1500 ms
-constexpr uint32_t kRepeatMs = 2000;        // repeat a request after 1500 ms < t <= 2200 ms (manual 5.2.4)
-constexpr uint32_t kStxTimeoutMs = 5000;
+constexpr uint32_t kStxTimeoutMs = 12000;  // the meter sends without acknowledgement after its timeout
 constexpr uint32_t kCharTimeoutMs = 2000;   // ta < 1500 ms between two characters
 
 void copy_trim(char *dst, size_t cap, const char *src, size_t n) {
@@ -101,6 +99,7 @@ uint8_t IecReader::begin(Mode mode, uint32_t now_ms) {
   ident_z_ = 0;
   meter_error_[0] = 0;
   requests_sent_ = 0;
+  acks_sent_ = 1;
   serial_[0] = 0;
   memset(&line_, 0, sizeof(line_));
   len_ = 0;
@@ -126,6 +125,12 @@ uint8_t IecReader::finish_ident_(uint32_t now_ms) {
     const uint8_t brk[5] = {kSoh, 'B', '0', kEtx, static_cast<uint8_t>('B' ^ '0' ^ kEtx)};
     memcpy(tx_, brk, sizeof(brk));
     tx_len_ = sizeof(brk);
+  } else if (!send_ack_) {
+    // Readout without acknowledgement (manual 5.2.2, fig. 5-1): the meter sends the data at 300 Bd by itself
+    baud_ = 300;
+    state_ = State::kWaitStx;
+    state_ms_ = now_ms;
+    return kNone;
   } else {
     // The meter only switches if Z equals the code from its identification (manual 5.2.1), so either that
     // code or '0' (300 Bd), never something in between
@@ -137,11 +142,25 @@ uint8_t IecReader::finish_ident_(uint32_t now_ms) {
   }
   state_ = State::kSendAck;
   state_ms_ = now_ms;
+  wait_ms_ = reply_delay_ms_;
   return kNone;
 }
 
 uint8_t IecReader::handle_data_line_() {
   buf_[len_] = 0;
+  // Error telegram: "(ERxxxx)" per manual 5.2.11; a real TD-351x sends it without brackets ("ERxxxx")
+  {
+    const char *e = (buf_[0] == '(') ? buf_ + 1 : buf_;
+    if (e[0] == 'E' && e[1] == 'R' && e[2] >= '0' && e[2] <= '9') {
+      size_t k = 0;
+      while (k < sizeof(meter_error_) - 1 && e[k] && e[k] != ')') {
+        meter_error_[k] = e[k];
+        k++;
+      }
+      meter_error_[k] = 0;
+      return kNone;
+    }
+  }
   char *open = strchr(buf_, '(');
   if (!open) return kNone;  // e.g. "!" or an empty line
   char *close = strchr(open, ')');
@@ -156,10 +175,6 @@ uint8_t IecReader::handle_data_line_() {
     char *close2 = strchr(close + 2, ')');
     if (close2) copy_trim(line_.extra, sizeof(line_.extra), close + 2, static_cast<size_t>(close2 - close - 2));
   }
-  if (!line_.obis[0] && line_.value[0] == 'E' && line_.value[1] == 'R') {  // error telegram (ERxxxx)
-    strncpy(meter_error_, line_.value, sizeof(meter_error_) - 1);
-    meter_error_[sizeof(meter_error_) - 1] = 0;
-  }
   if (strcmp(line_.obis, "0.0.0") == 0) {  // device address = serial number
     strncpy(serial_, line_.value, sizeof(serial_) - 1);
     serial_[sizeof(serial_) - 1] = 0;
@@ -167,7 +182,23 @@ uint8_t IecReader::handle_data_line_() {
   return kLine;
 }
 
+uint8_t IecReader::data_line_() {
+  const uint8_t r = handle_data_line_();
+  return meter_error_[0] ? r : static_cast<uint8_t>(r | kRawLine);  // error telegrams are no data lines
+}
+
 uint8_t IecReader::end_of_data_() {
+  if (meter_error_[0] && acks_sent_ < ack_tries_) {
+    // The meter refused the acknowledgement (a real TD-351x answers the first one with ER0007): send it again
+    // ack_retry_ms_ after the previous one, still in the same session, like the original firmware does
+    acks_sent_++;
+    meter_error_[0] = 0;
+    len_ = 0;
+    state_ = State::kSendAck;
+    state_ms_ = ack_ms_;
+    wait_ms_ = ack_retry_ms_;
+    return kNone;
+  }
   if (meter_error_[0]) return fail_(Error::kMeterError);
   state_ = State::kIdle;
   return kDone;
@@ -205,20 +236,29 @@ uint8_t IecReader::push(uint8_t byte, uint32_t now_ms) {
         state_ = State::kData;
         bcc_ = 0;
         len_ = 0;
+        no_stx_ = false;
+        return kNone;
       }
-      return kNone;
+      // A real TD-351x sends the data set after a repeated acknowledgement without STX, starting directly
+      // with "F.F(". Take it as data; there is no defined start for the block check character then.
+      if (c <= ' ' || c >= 0x7F || c == '/' || c == '!') return kNone;
+      state_ = State::kData;
+      bcc_ = 0;
+      len_ = 0;
+      no_stx_ = true;
+      [[fallthrough]];  // process this character as data
 
     case State::kData:
       bcc_ ^= static_cast<uint8_t>(c);
       if (c == kEtx) {
         // a line without CR LF before ETX, e.g. the error telegram STX (ERxxxx) ETX BCC
-        const uint8_t r = (len_ > 0) ? static_cast<uint8_t>(handle_data_line_() | kRawLine) : static_cast<uint8_t>(kNone);
+        const uint8_t r = (len_ > 0) ? data_line_() : static_cast<uint8_t>(kNone);
         len_ = 0;
         state_ = State::kWaitBcc;
         return r;
       }
       if (c == '\n') {
-        const uint8_t r = (len_ > 0) ? static_cast<uint8_t>(handle_data_line_() | kRawLine) : static_cast<uint8_t>(kNone);
+        const uint8_t r = (len_ > 0) ? data_line_() : static_cast<uint8_t>(kNone);
         len_ = 0;
         return r;
       }
@@ -228,7 +268,7 @@ uint8_t IecReader::push(uint8_t byte, uint32_t now_ms) {
       return kNone;
 
     case State::kWaitBcc:
-      if (static_cast<uint8_t>(c) != (bcc_ & 0x7F)) return fail_(Error::kBcc);
+      if (!no_stx_ && static_cast<uint8_t>(c) != (bcc_ & 0x7F)) return fail_(Error::kBcc);
       return end_of_data_();
 
     case State::kIdle:
@@ -248,25 +288,38 @@ uint8_t IecReader::poll(uint32_t now_ms) {
         state_ms_ = now_ms;
         return kSend;
       }
-      if (requests_sent_ < request_tries_ && in_state > kRepeatMs && len_ == 0) {
-        // no answer: send the request again (tx_ still holds it)
-        requests_sent_++;
-        state_ms_ = now_ms;
-        return kSend;
+      if (requests_sent_ < request_tries_) {
+        if (in_state > request_interval_ms_) {
+          // no (complete) answer: send the request again (tx_ still holds it)
+          requests_sent_++;
+          len_ = 0;
+          state_ms_ = now_ms;
+          return kSend;
+        }
+      } else if (in_state > kIdentTimeoutMs) {
+        return fail_(Error::kNoIdent);
       }
-      if (in_state > kIdentTimeoutMs) return fail_(Error::kNoIdent);
       break;
     case State::kSendAck:
-      if (in_state < kReplyDelayMs) break;
+      if (in_state < wait_ms_) break;
       if (mode_ == Mode::kIdentOnly) {
         state_ = State::kIdle;
         return kSend | kDone;
       }
       state_ = State::kWaitStx;
       state_ms_ = now_ms;
+      ack_ms_ = now_ms;
       return static_cast<uint8_t>(kSend | (baud_ != 300 ? kSetSerial : 0));
     case State::kWaitStx:
-      if (in_state > kStxTimeoutMs) return fail_(Error::kTimeout);
+      if (!send_ack_) {
+        if (in_state > kStxTimeoutMs) return fail_(Error::kTimeout);
+      } else if (in_state > ack_retry_ms_) {
+        if (acks_sent_ >= ack_tries_) return fail_(Error::kTimeout);
+        acks_sent_++;  // no data after the acknowledgement: send it again (like the original firmware)
+        state_ms_ = now_ms;
+        ack_ms_ = now_ms;
+        return static_cast<uint8_t>(kSend | (baud_ != 300 ? kSetSerial : 0));
+      }
       break;
     case State::kData:
       if (static_cast<uint32_t>(now_ms - last_rx_ms_) > kCharTimeoutMs) return fail_(Error::kTimeout);
