@@ -12,6 +12,8 @@ Fixes in `IecReader` after checking against the Siemens TD-351x manual (D23-510-
 - Error telegrams `STX (ERxxxx) ETX BCC` end the readout with `Error::kMeterError`, code in `meter_error()`.
   A line directly before ETX (without CR LF) is now processed.
 - A missing block check character after ETX is accepted (allowed by the manual).
+- `begin()` now only returns `kSetSerial`; the request follows as `kSend` from the next `poll()`. Before, both came
+  together, and the documented order (send first, then switch) sent the first request at the old baud rate.
 
 ## 0.2.0 – 2026-11-24
 

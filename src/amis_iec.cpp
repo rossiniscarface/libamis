@@ -100,7 +100,7 @@ uint8_t IecReader::begin(Mode mode, uint32_t now_ms) {
   ident_[0] = 0;
   ident_z_ = 0;
   meter_error_[0] = 0;
-  requests_sent_ = 1;
+  requests_sent_ = 0;
   serial_[0] = 0;
   memset(&line_, 0, sizeof(line_));
   len_ = 0;
@@ -112,7 +112,7 @@ uint8_t IecReader::begin(Mode mode, uint32_t now_ms) {
   strcat(req, "!\r\n");
   set_tx_(req);
   state_ = State::kWaitIdent;
-  return kSetSerial | kSend;
+  return kSetSerial;  // the request is sent by the next poll(), after the switch to 300 Bd
 }
 
 uint8_t IecReader::finish_ident_(uint32_t now_ms) {
@@ -243,6 +243,11 @@ uint8_t IecReader::poll(uint32_t now_ms) {
   const uint32_t in_state = now_ms - state_ms_;
   switch (state_) {
     case State::kWaitIdent:
+      if (requests_sent_ == 0) {  // first request
+        requests_sent_ = 1;
+        state_ms_ = now_ms;
+        return kSend;
+      }
       if (requests_sent_ < request_tries_ && in_state > kRepeatMs && len_ == 0) {
         // no answer: send the request again (tx_ still holds it)
         requests_sent_++;

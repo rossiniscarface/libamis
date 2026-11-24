@@ -246,7 +246,8 @@ static void test_iec() {
 
   // Data readout: request at 300 Bd
   uint8_t a = r.begin(amis::IecReader::Mode::kReadout, t);
-  CHECK(a == (amis::IecReader::kSetSerial | amis::IecReader::kSend) && r.baud() == 300);
+  CHECK(a == amis::IecReader::kSetSerial && r.baud() == 300);  // first switch to 300 Bd ...
+  CHECK(r.poll(t) == amis::IecReader::kSend);                    // ... then send the request
   const uint8_t *tx = r.tx(&n);
   CHECK(n == 5 && memcmp(tx, "/?!\r\n", 5) == 0);
   CHECK(r.begin(amis::IecReader::Mode::kReadout, t) == amis::IecReader::kFailed);  // already running
@@ -331,6 +332,7 @@ static void test_iec() {
   r4.begin(amis::IecReader::Mode::kIdentOnly, 0);
   tx = r4.tx(&n);
   CHECK(n == 21 && memcmp(tx, "/?2351102623000045!\r\n", 21) == 0);
+  CHECK(r4.poll(0) == amis::IecReader::kSend);
   // The request is repeated twice (manual 5.2.12.2), then the reader gives up
   CHECK(r4.poll(1900) == 0);
   CHECK(r4.poll(2100) == amis::IecReader::kSend);

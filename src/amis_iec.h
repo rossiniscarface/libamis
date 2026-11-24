@@ -66,7 +66,8 @@ class IecReader {
   // Limit the total duration (default 120 s)
   void set_total_timeout_ms(uint32_t ms) { total_timeout_ms_ = ms; }
 
-  // Starts the readout. Returns kSetSerial (300 Bd 7E1) | kSend ("/?!")
+  // Starts the readout. Returns kSetSerial (switch to 300 Bd 7E1 now); the request "/?!" follows as kSend from
+  // the next poll(). Rule for all actions: first send tx(), then switch the baud rate.
   uint8_t begin(Mode mode, uint32_t now_ms);
   // Received byte (the parity bit is ignored)
   uint8_t push(uint8_t byte, uint32_t now_ms);

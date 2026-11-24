@@ -82,8 +82,8 @@ character. An error telegram of the meter (`ERxxxx`) ends the readout with `Erro
 
 ```cpp
 amis::IecReader iec;
-uint8_t a = iec.begin(amis::IecReader::Mode::kIdentOnly, millis());
-// loop: a |= iec.push(byte, millis()) for every byte, a |= iec.poll(millis())
+uint8_t a = iec.begin(amis::IecReader::Mode::kIdentOnly, millis());   // only kSetSerial: 300 Bd 7E1
+// loop: a |= iec.push(byte, millis()) for every byte, a |= iec.poll(millis()); always send first, then switch
 if (a & amis::IecReader::kSend)      { size_t n; const uint8_t *d = iec.tx(&n); uart_write(d, n); uart_flush(); }
 if (a & amis::IecReader::kSetSerial) uart_config(iec.baud(), 7E1);   // switch only AFTER sending
 if (a & amis::IecReader::kLine)      use(iec.line());                // obis / value / unit / extra
