@@ -80,6 +80,7 @@ uint8_t a = iec.begin(amis::IecReader::Mode::kIdentOnly, millis());
 if (a & amis::IecReader::kSend)      { size_t n; const uint8_t *d = iec.tx(&n); uart_write(d, n); uart_flush(); }
 if (a & amis::IecReader::kSetSerial) uart_config(iec.baud(), 7E1);   // switch only AFTER sending
 if (a & amis::IecReader::kLine)      use(iec.line());                // obis / value / unit / extra
+if (a & amis::IecReader::kRawLine)   save(iec.raw_line());           // line as received (also "!")
 if (a & (amis::IecReader::kDone | amis::IecReader::kFailed)) {
   uart_config(9600, 8E1); reader.reset();                            // back to M-Bus
   // iec.serial_number(), iec.identification(), iec.error()

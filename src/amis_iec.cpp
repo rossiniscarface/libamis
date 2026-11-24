@@ -185,7 +185,7 @@ uint8_t IecReader::push(uint8_t byte, uint32_t now_ms) {
         return kNone;
       }
       if (c == '\n') {
-        const uint8_t r = (len_ > 0) ? handle_data_line_() : static_cast<uint8_t>(kNone);
+        const uint8_t r = (len_ > 0) ? static_cast<uint8_t>(handle_data_line_() | kRawLine) : static_cast<uint8_t>(kNone);
         len_ = 0;
         return r;
       }

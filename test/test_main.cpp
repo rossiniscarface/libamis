@@ -243,10 +243,15 @@ static void test_iec() {
   uint8_t bcc = 0;
   for (const char *p = block; *p; p++) bcc ^= static_cast<uint8_t>(*p);
   CHECK(r.push(0x02, t++) == 0);  // STX
-  int lines = 0;
-  bool saw_160 = false, saw_180 = false;
+  int lines = 0, raw_lines = 0;
+  bool saw_160 = false, saw_180 = false, saw_raw_160 = false, saw_raw_end = false;
   for (const char *p = block; *p; p++) {
     a = r.push(static_cast<uint8_t>(*p), t++);
+    if (a & amis::IecReader::kRawLine) {
+      raw_lines++;
+      if (!strcmp(r.raw_line(), "1.6.0(01.234*kW)(2611231445)")) saw_raw_160 = true;
+      if (!strcmp(r.raw_line(), "!")) saw_raw_end = true;
+    }
     if (a & amis::IecReader::kLine) {
       lines++;
       const amis::IecLine &l = r.line();
@@ -255,6 +260,7 @@ static void test_iec() {
     }
   }
   CHECK(lines == 4 && saw_160 && saw_180);
+  CHECK(raw_lines == 5 && saw_raw_160 && saw_raw_end);
   CHECK(r.push(bcc, t++) == amis::IecReader::kDone && !r.active());
   CHECK(strcmp(r.serial_number(), "12345678") == 0);
 

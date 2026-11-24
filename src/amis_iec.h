@@ -46,6 +46,7 @@ class IecReader {
     kLine = 1 << 2,       // line() holds a new data line
     kDone = 1 << 3,       // done -> UART back to 9600 8E1, amis::Reader::reset()
     kFailed = 1 << 4,     // aborted, error() tells why -> also back to 9600 8E1
+    kRawLine = 1 << 5,    // raw_line() holds a data line as received (every non-empty line, also "!")
   };
 
   enum class Error : uint8_t { kNone, kNoIdent, kTimeout, kBcc, kFormat, kBusy };
@@ -74,6 +75,8 @@ class IecReader {
   }
   uint32_t baud() const { return baud_; }
   const IecLine &line() const { return line_; }
+  // Last data line exactly as received, without CR LF. Only valid right after push() returned kRawLine.
+  const char *raw_line() const { return buf_; }
   Error error() const { return error_; }
 
   // Result of the identification, e.g. "SAT" / '6' / "2351102623000045"
