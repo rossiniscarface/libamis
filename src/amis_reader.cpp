@@ -5,6 +5,8 @@
 
 #include <string.h>
 
+#include "amis_pgm.h"
+
 namespace amis {
 
 namespace {
@@ -26,7 +28,7 @@ struct RecordKey {
   uint8_t bytes[6];
   uint16_t field;
 };
-const RecordKey kRecords[] = {
+const RecordKey kRecords[] AMIS_PROGMEM = {
     {2, {0x06, 0x6D}, Reading::kTime},                                      // date/time type I
     {2, {0x04, 0x03}, Reading::kEnergyImport},                              // 1.8.0 Wh
     {3, {0x04, 0x83, 0x3C}, Reading::kEnergyExport},                        // 2.8.0 Wh, backward flow
@@ -40,7 +42,7 @@ const RecordKey kRecords[] = {
 };
 
 // Data length by DIF (lower 4 bits); 0xFF = variable, 0xFE = special function
-const uint8_t kDataLen[16] = {0, 1, 2, 3, 4, 4, 6, 8, 0, 1, 2, 3, 4, 0xFF, 6, 0xFE};
+const uint8_t kDataLen[16] AMIS_PROGMEM = {0, 1, 2, 3, 4, 4, 6, 8, 0, 1, 2, 3, 4, 0xFF, 6, 0xFE};
 
 int hexval(char c) {
   if (c >= '0' && c <= '9') return c - '0';
@@ -84,19 +86,33 @@ int64_t DateTime::to_unix_utc() const {
   return local - 3600 * (dst ? 2 : 1);  // CET = UTC+1, CEST = UTC+2
 }
 
+namespace {
+// Texts in flash on the ESP8266 (see amis_pgm.h)
+const char kErr0[] AMIS_PROGMEM = "ok";
+const char kErr1[] AMIS_PROGMEM = "checksum error";
+const char kErr2[] AMIS_PROGMEM = "invalid frame";
+const char kErr3[] AMIS_PROGMEM = "unsupported CI field";
+const char kErr4[] AMIS_PROGMEM = "unsupported encryption";
+const char kErr5[] AMIS_PROGMEM = "no key set";
+const char kErr6[] AMIS_PROGMEM = "wrong key";
+const char kErr7[] AMIS_PROGMEM = "unparseable data records";
+const char kErr8[] AMIS_PROGMEM = "no known values";
+const char kErrUnknown[] AMIS_PROGMEM = "?";
+}  // namespace
+
 const char *error_str(Error e) {
   switch (e) {
-    case Error::kNone: return "ok";
-    case Error::kChecksum: return "checksum error";
-    case Error::kFrameFormat: return "invalid frame";
-    case Error::kUnsupportedCi: return "unsupported CI field";
-    case Error::kUnsupportedEncryption: return "unsupported encryption";
-    case Error::kNoKey: return "no key set";
-    case Error::kWrongKey: return "wrong key";
-    case Error::kRecordFormat: return "unparseable data records";
-    case Error::kNoData: return "no known values";
+    case Error::kNone: return detail::pgm_str(kErr0);
+    case Error::kChecksum: return detail::pgm_str(kErr1);
+    case Error::kFrameFormat: return detail::pgm_str(kErr2);
+    case Error::kUnsupportedCi: return detail::pgm_str(kErr3);
+    case Error::kUnsupportedEncryption: return detail::pgm_str(kErr4);
+    case Error::kNoKey: return detail::pgm_str(kErr5);
+    case Error::kWrongKey: return detail::pgm_str(kErr6);
+    case Error::kRecordFormat: return detail::pgm_str(kErr7);
+    case Error::kNoData: return detail::pgm_str(kErr8);
   }
-  return "?";
+  return detail::pgm_str(kErrUnknown);
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -151,6 +167,7 @@ uint8_t Reader::push(uint8_t byte, uint32_t now_ms) {
 uint8_t Reader::feed_(uint8_t b) {
   if (len_ == 0) {
     // Only a start character begins a frame; drop anything else (noise, echo of our own E5)
+    plain_len_ = 0;  // a new frame overwrites the buffer
     if (b == kStartShort) {
       expected_ = 5;
     } else if (b == kStartLong) {
@@ -162,7 +179,8 @@ uint8_t Reader::feed_(uint8_t b) {
   buf_[len_++] = b;
 
   if (buf_[0] == kStartLong && len_ == 4) {
-    if (buf_[1] != buf_[2] || buf_[3] != kStartLong || buf_[1] < 3) {
+    if (buf_[1] != buf_[2] || buf_[3] != kStartLong || buf_[1] < 3 ||
+        static_cast<size_t>(buf_[1]) + 6 > kMaxFrame) {
       stats_.resyncs++;
       return restart_from_(1);
     }
@@ -235,7 +253,7 @@ uint8_t Reader::handle_long_() {
 
 // Application layer starting at CI. Supported: CI 0x5B / 0x72 with long header (12 bytes),
 // security mode 0 (plain) and 5 (AES-128-CBC, IV from address and access number).
-uint8_t Reader::decode_application_(const uint8_t *app, size_t len) {
+uint8_t Reader::decode_application_(uint8_t *app, size_t len) {
   if (len < 1) return fail_(Error::kFrameFormat);
   const uint8_t ci = app[0];
   if (ci != 0x5B && ci != 0x72) return fail_(Error::kUnsupportedCi);
@@ -245,7 +263,7 @@ uint8_t Reader::decode_application_(const uint8_t *app, size_t len) {
   const uint8_t *man = app + 5;     // 2 bytes
   const uint8_t ver = app[7], med = app[8], acc = app[9];
   const uint16_t cfg = static_cast<uint16_t>(app[11] | (app[12] << 8));
-  const uint8_t *data = app + 13;
+  uint8_t *data = app + 13;  // decrypted in place
   const size_t dlen = len - 13;
 
   if (have_access_ && acc == last_access_) {
@@ -254,7 +272,7 @@ uint8_t Reader::decode_application_(const uint8_t *app, size_t len) {
   }
 
   const uint8_t mode = (cfg >> 8) & 0x1F;
-  memcpy(plain_, data, dlen);
+  plain_off_ = static_cast<size_t>(data - buf_);
   plain_len_ = dlen;
   if (mode == 5) {
     if (!has_key_) return fail_(Error::kNoKey);
@@ -267,8 +285,8 @@ uint8_t Reader::decode_application_(const uint8_t *app, size_t len) {
     iv[6] = ver;
     iv[7] = med;
     memset(iv + 8, acc, 8);
-    aes_.cbc_decrypt(plain_, enc, iv);
-    if (plain_[0] != 0x2F || plain_[1] != 0x2F) return fail_(Error::kWrongKey);
+    aes_.cbc_decrypt(data, enc, iv);
+    if (data[0] != 0x2F || data[1] != 0x2F) return fail_(Error::kWrongKey);
   } else if (mode != 0) {
     return fail_(Error::kUnsupportedEncryption);
   }
@@ -279,7 +297,7 @@ uint8_t Reader::decode_application_(const uint8_t *app, size_t len) {
   r.version = ver;
   r.medium = med;
   r.access_number = acc;
-  if (!parse_records_(plain_, dlen, r)) return fail_(Error::kRecordFormat);
+  if (!parse_records_(data, dlen, r)) return fail_(Error::kRecordFormat);
   if (r.present == 0) return fail_(Error::kNoData);
 
   reading_ = r;
@@ -318,7 +336,7 @@ bool Reader::parse_records_(const uint8_t *p, size_t len, Reading &out) {
     }
     const size_t key_len = i - key_start;
 
-    size_t dlen = kDataLen[dif & 0x0F];
+    size_t dlen = AMIS_RD(&kDataLen[dif & 0x0F]);
     if (dlen == 0xFF) {  // variable length
       if (i >= len) return false;
       const uint8_t lvar = p[i++];
@@ -331,7 +349,9 @@ bool Reader::parse_records_(const uint8_t *p, size_t len, Reading &out) {
     const uint8_t *v = p + i;
     i += dlen;
 
-    for (const RecordKey &k : kRecords) {
+    for (const RecordKey &kf : kRecords) {
+      RecordKey k;
+      AMIS_MEMCPY_P(&k, &kf, sizeof(k));  // table lives in flash on the ESP8266
       if (k.len != key_len || memcmp(k.bytes, p + key_start, key_len) != 0) continue;
       switch (k.field) {
         case Reading::kTime:

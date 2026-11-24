@@ -5,14 +5,7 @@
 
 #include <string.h>
 
-#if defined(ESP8266) || defined(ARDUINO_ARCH_ESP8266)
-#include <pgmspace.h>
-#define AMIS_PROGMEM PROGMEM
-#define AMIS_RD(p) pgm_read_byte(p)
-#else
-#define AMIS_PROGMEM
-#define AMIS_RD(p) (*(p))
-#endif
+#include "amis_pgm.h"
 
 namespace amis {
 namespace {

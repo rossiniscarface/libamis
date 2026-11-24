@@ -16,7 +16,8 @@ The library handles everything that makes the AMIS special, but it does **not to
 - Decoding of the data records: meter clock, 1.8.0, 2.8.0, 3.8.1, 4.8.1, 1.7.0, 2.7.0, 3.7.0, 4.7.0, 1.128.0
 - Repeated frames (lost acknowledgement) are detected and not reported twice
 
-No heap, no exceptions, no RTTI, no Arduino dependency, C++17. Builds for **ESP8266**, **ESP32** (ESP32, S3, C3,
+No heap, no exceptions, no RTTI, no Arduino dependency, C++17. Small RAM footprint: on the ESP8266 tables and
+texts stay in flash, and `-DLIBAMIS_MAX_FRAME=128` shrinks the frame buffer to what the AMIS needs. Builds for **ESP8266**, **ESP32** (ESP32, S3, C3,
 C6, …), other microcontrollers and the PC.
 
 **Status:** version 0.1.0. Tested on the PC (including the example telegram from the Netz OÖ specification) and

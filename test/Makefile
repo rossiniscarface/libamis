@@ -14,8 +14,9 @@ vectors.h: gen_vectors.py
 
 sanitize:
 	$(CXX) -std=c++17 -g -fsanitize=address,undefined -I../src $(SRC) -o amis_test_san && ./amis_test_san
+	$(CXX) -std=c++17 -g -fsanitize=address,undefined -DLIBAMIS_MAX_FRAME=101 -I../src $(SRC) -o amis_test_san_small && ./amis_test_san_small
 
 clean:
-	rm -f amis_test amis_test_san
+	rm -f amis_test amis_test_san amis_test_san_small
 
 .PHONY: test sanitize clean

@@ -167,6 +167,37 @@ static void test_frames() {
   st = feed(r6, kFrame2, sizeof(kFrame2), 1000, &acks);
   CHECK((st & amis::Reader::kReading) && acks == 1 && r6.reading().access_number == 0x22);
   CHECK(r6.stats().resyncs >= 1);
+
+  // Long frame header with L = 250 (longer than the AMIS ever sends, longer than a small LIBAMIS_MAX_FRAME):
+  // must not overflow and must not block the next frame
+  amis::Reader r7;
+  r7.set_key_hex(kTestKeyHex);
+  uint8_t big[260];
+  memset(big, 0x55, sizeof(big));
+  big[0] = 0x68; big[1] = 250; big[2] = 250; big[3] = 0x68;
+  acks = 0;
+  feed(r7, big, 4, 0, &acks);
+  if (amis::Reader::kMaxFrame < 256) CHECK(r7.stats().resyncs == 1);  // dropped right after the header
+  feed(r7, big + 4, sizeof(big) - 4, 4, &acks);
+  st = feed(r7, kFrame1, sizeof(kFrame1), 1000, &acks);
+  CHECK((st & amis::Reader::kReading) && acks == 1 && r7.reading().energy_import_wh == 12345678);
+
+  // The plaintext is valid until the next push() and is dropped when a new frame starts
+  size_t pn = 0;
+  CHECK(r7.last_plaintext(&pn)[0] == 0x2F && pn == 80);
+  r7.push(0x68, 2000);
+  r7.last_plaintext(&pn);
+  CHECK(pn == 0);
+
+  // A copy must keep its own plaintext
+  amis::Reader r8;
+  r8.set_key_hex(kTestKeyHex);
+  feed(r8, kFrame2, sizeof(kFrame2), 0, &acks);
+  amis::Reader r9 = r8;
+  r8.push(0x68, 100);
+  size_t n9 = 0;
+  const uint8_t *p9 = r9.last_plaintext(&n9);
+  CHECK(n9 == 80 && p9[0] == 0x2F && p9[2] == 0x06);
 }
 
 // Example from the Netz OOe specification "AMIS-Zaehler Kundenschnittstelle" (2021-11-05), section 2.4.2.9:

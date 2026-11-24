@@ -4,6 +4,14 @@
 
 - `IecReader`: `kRawLine` and `raw_line()` give every data line exactly as received (also the final `!`),
   e.g. to store the billing data set as a file.
+- Less RAM, mainly on the ESP8266:
+  - the payload is decrypted in place in the frame buffer (no second 261-byte buffer);
+    `last_plaintext()` is therefore only valid until the next `push()`
+  - `-DLIBAMIS_MAX_FRAME=101..261` sets the frame buffer size (default 261); the AMIS needs 101,
+    longer frames are dropped safely
+  - error texts and lookup tables are stored in flash on the ESP8266 (`error_str()` copies the text into a
+    shared 40-byte buffer there)
+  - `amis::Reader` shrinks from 848 to 588 bytes, or to 452 bytes with `LIBAMIS_MAX_FRAME=128` (ESP8266)
 
 ## 0.1.0 – 2026-11-24
 

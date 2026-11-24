@@ -19,6 +19,12 @@
 
 #include "amis_aes128.h"
 
+// Size of the frame buffer. 261 = largest M-Bus long frame (L = 255). The AMIS sends 101-byte frames, so
+// -DLIBAMIS_MAX_FRAME=128 saves RAM; longer frames are then dropped (resynchronisation).
+#ifndef LIBAMIS_MAX_FRAME
+#define LIBAMIS_MAX_FRAME 261
+#endif
+
 namespace amis {
 
 // Date/time of the meter (M-Bus type I, 6 bytes, local time with DST bit)
@@ -93,6 +99,8 @@ enum class Error : uint8_t {
   kRecordFormat,            // data records not parseable
   kNoData,                  // frame without any known value
 };
+// Short English text for an error. On the ESP8266 the texts live in flash and are copied into one shared
+// buffer, so the result is only valid until the next error_str() call.
 const char *error_str(Error e);
 
 struct Stats {
@@ -111,7 +119,8 @@ struct Stats {
 class Reader {
  public:
   static constexpr uint8_t kAck = 0xE5;
-  static constexpr size_t kMaxFrame = 261;   // largest M-Bus long frame (L = 255)
+  static constexpr size_t kMaxFrame = LIBAMIS_MAX_FRAME;
+  static_assert(kMaxFrame >= 101 && kMaxFrame <= 261, "LIBAMIS_MAX_FRAME must be 101..261");
 
   // Return value of push(): bits that may be set together
   enum Status : uint8_t {
@@ -143,10 +152,11 @@ class Reader {
   // Is the last valid reading younger than max_age_ms?
   bool online(uint32_t now_ms, uint32_t max_age_ms = 5000) const;
 
-  // Decrypted payload of the last long frame (for debugging)
+  // Decrypted payload of the last long frame (for debugging). It is decrypted in place in the frame buffer,
+  // so it is only valid until the next call of push().
   const uint8_t *last_plaintext(size_t *len) const {
     if (len) *len = plain_len_;
-    return plain_;
+    return buf_ + plain_off_;
   }
 
   // Reset the frame search (e.g. after changing the baud rate)
@@ -156,7 +166,7 @@ class Reader {
   uint8_t feed_(uint8_t byte);
   uint8_t handle_short_();
   uint8_t handle_long_();
-  uint8_t decode_application_(const uint8_t *app, size_t len);
+  uint8_t decode_application_(uint8_t *app, size_t len);
   bool parse_records_(const uint8_t *p, size_t len, Reading &out);
   uint8_t fail_(Error e);
   uint8_t restart_from_(size_t skip);
@@ -171,7 +181,7 @@ class Reader {
   size_t expected_ = 0;
   uint32_t last_byte_ms_ = 0;
 
-  uint8_t plain_[kMaxFrame];
+  size_t plain_off_ = 0;  // plaintext = buf_ + plain_off_ (decrypted in place)
   size_t plain_len_ = 0;
 
   Reading reading_;

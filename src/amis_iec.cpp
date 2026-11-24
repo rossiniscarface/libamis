@@ -6,6 +6,8 @@
 
 #include <string.h>
 
+#include "amis_pgm.h"
+
 namespace amis {
 
 namespace {
@@ -29,16 +31,27 @@ void copy_trim(char *dst, size_t cap, const char *src, size_t n) {
 bool is_letter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
 }  // namespace
 
+namespace {
+// Texts in flash on the ESP8266 (see amis_pgm.h)
+const char kIecErr0[] AMIS_PROGMEM = "ok";
+const char kIecErr1[] AMIS_PROGMEM = "no identification from meter";
+const char kIecErr2[] AMIS_PROGMEM = "timeout";
+const char kIecErr3[] AMIS_PROGMEM = "block check character error";
+const char kIecErr4[] AMIS_PROGMEM = "data line too long or unreadable";
+const char kIecErr5[] AMIS_PROGMEM = "readout already running";
+const char kIecErrUnknown[] AMIS_PROGMEM = "?";
+}  // namespace
+
 const char *error_str(IecReader::Error e) {
   switch (e) {
-    case IecReader::Error::kNone: return "ok";
-    case IecReader::Error::kNoIdent: return "no identification from meter";
-    case IecReader::Error::kTimeout: return "timeout";
-    case IecReader::Error::kBcc: return "block check character error";
-    case IecReader::Error::kFormat: return "data line too long or unreadable";
-    case IecReader::Error::kBusy: return "readout already running";
+    case IecReader::Error::kNone: return detail::pgm_str(kIecErr0);
+    case IecReader::Error::kNoIdent: return detail::pgm_str(kIecErr1);
+    case IecReader::Error::kTimeout: return detail::pgm_str(kIecErr2);
+    case IecReader::Error::kBcc: return detail::pgm_str(kIecErr3);
+    case IecReader::Error::kFormat: return detail::pgm_str(kIecErr4);
+    case IecReader::Error::kBusy: return detail::pgm_str(kIecErr5);
   }
-  return "?";
+  return detail::pgm_str(kIecErrUnknown);
 }
 
 uint32_t IecReader::baud_for_char(char z) {
