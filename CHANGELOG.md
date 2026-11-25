@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 – unreleased
+## 0.3.0 – 2026-11-25
 
 ### Breaking changes
 
@@ -16,16 +16,10 @@
 - `Reader::push_error()` and `Stats::line_errors`: report a UART parity, framing or overrun error, the frame in
   progress is dropped (no `E5`). README and header describe the integration rule (check the UART error flag
   before a block goes to `push()`).
-
 - `Reader::set_required_fields()` and `Error::kIncomplete`: a frame without a required value is reported as an
   error instead of a reading with zeros (default: no requirement). `Reading::kAll` names all 10 fields.
-
 - `IecReader::raw_line_truncated()` and `truncated_lines()`: a data line longer than 95 characters no longer ends
   the readout with `Error::kFormat`; it is cut off, reported as raw line only, counted, and the readout goes on.
-
-- `IecReader`: a non-printable character while waiting for the identification drops what was received so far;
-  noise after a random `/` no longer keeps the request from being repeated.
-
 - `DateTime::raw`: the 6 bytes of the timestamp as sent (M-Bus type I / CP48).
 
 ### Changed
@@ -43,13 +37,14 @@
 - CMake: `target_compile_features(amis PUBLIC cxx_std_17)` instead of a global standard; the test target is only
   built when libamis is the top-level project.
 - CI also runs on pushes to `main`.
-- The meter identification from a real trace in docs and tests is replaced by a placeholder.
 
 ### Fixes
 
 - `IecReader`: the total timeout (`set_total_timeout_ms()`, default 120 s) ended a readout with the default
   settings in the middle of the billing data set (about 7 min at 300 Bd). It now only applies until the data
   starts; while data arrives, the 2 s character timeout guards the readout.
+- `IecReader`: a non-printable character while waiting for the identification drops what was received so far;
+  noise after a random `/` no longer keeps the request from being repeated.
 
 ## 0.2.3 – 2026-11-25
 
