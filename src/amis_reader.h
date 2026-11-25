@@ -114,7 +114,7 @@ struct Stats {
   uint32_t short_frames = 0;    // valid short frames (SND_NKE)
   uint32_t long_frames = 0;     // valid long frames
   uint32_t readings = 0;        // successfully decoded
-  uint32_t duplicates = 0;      // repeated frame (same access number)
+  uint32_t duplicates = 0;      // repeated frame (same access number and FCB)
   uint32_t acks = 0;            // E5 requested
   uint32_t checksum_errors = 0;
   uint32_t key_errors = 0;
@@ -214,6 +214,8 @@ class Reader {
   uint32_t now_ms_ = 0;
   bool have_access_ = false;
   uint8_t last_access_ = 0;
+  uint8_t last_fcb_ = 0;
+  uint8_t c_field_ = 0;  // C field of the long frame being decoded
 
   Error last_error_ = Error::kNone;
   Stats stats_;

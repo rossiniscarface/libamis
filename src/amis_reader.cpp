@@ -16,6 +16,8 @@ constexpr uint8_t kStartLong = 0x68;
 constexpr uint8_t kStop = 0x16;
 constexpr uint8_t kSndNke = 0x40;
 constexpr uint8_t kAddrBroadcastReply = 0xFE;
+constexpr uint8_t kAddrBroadcastNoReply = 0xFF;
+constexpr uint8_t kFcb = 0x20, kFcv = 0x10;  // C field: frame count bit and frame count bit valid
 
 uint32_t le32(const uint8_t *p) {
   return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) | (static_cast<uint32_t>(p[2]) << 16) |
@@ -233,10 +235,11 @@ uint8_t Reader::handle_short_() {
   reset();
   stats_.short_frames++;
   if (c == kSndNke && (a == address_ || a == kAddrBroadcastReply)) {
-    have_access_ = false;  // communication restarts
+    have_access_ = false;  // communication restarts (also resets the FCB, EN 13757-2)
     stats_.acks++;
     return kSendAck;
   }
+  if (c == kSndNke && a == kAddrBroadcastNoReply) have_access_ = false;  // same, but no reply to 0xFF
   return kNothing;
 }
 
@@ -256,6 +259,7 @@ uint8_t Reader::handle_long_() {
     st |= kSendAck;  // every formally valid frame is acknowledged, even if its content does not fit
     stats_.acks++;
   }
+  c_field_ = c;
   return static_cast<uint8_t>(st | decode_application_(buf_ + 6, n - 8));
 }
 
@@ -274,8 +278,11 @@ uint8_t Reader::decode_application_(uint8_t *app, size_t len) {
   uint8_t *data = app + 13;  // decrypted in place
   const size_t dlen = len - 13;
 
-  if (have_access_ && acc == last_access_) {
-    stats_.duplicates++;  // repetition (our E5 got lost) -> already decoded
+  // Repetition (our E5 got lost, EN 13757-2): same telegram with the FCB unchanged (if FCV is set); the AMIS
+  // also keeps the access number then. Already decoded.
+  const uint8_t fcb = c_field_ & kFcb;
+  if (have_access_ && acc == last_access_ && (!(c_field_ & kFcv) || fcb == last_fcb_)) {
+    stats_.duplicates++;
     return kNothing;
   }
 
@@ -314,6 +321,7 @@ uint8_t Reader::decode_application_(uint8_t *app, size_t len) {
   last_reading_ms_ = now_ms_;
   have_access_ = true;
   last_access_ = acc;
+  last_fcb_ = fcb;
   last_error_ = Error::kNone;
   stats_.readings++;
   return kReading;

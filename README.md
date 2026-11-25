@@ -14,7 +14,7 @@ The library handles everything that makes the AMIS special, but it does **not to
 - **AES-128-CBC decryption** (OMS security mode 5, IV from meter address and access number) with the key from
   the Netz OÖ customer portal, detection of a wrong key
 - Decoding of the data records: meter clock, 1.8.0, 2.8.0, 3.8.1, 4.8.1, 1.7.0, 2.7.0, 3.7.0, 4.7.0, 1.128.0
-- Repeated frames (lost acknowledgement) are detected and not reported twice
+- Repeated frames (lost acknowledgement: same access number and FCB) are detected and not reported twice
 
 No heap, no exceptions, no RTTI, no Arduino dependency, C++17. Small RAM footprint: on the ESP8266 tables and
 texts stay in flash, and `-DLIBAMIS_MAX_FRAME=128` shrinks the frame buffer to what the AMIS needs. Builds for **ESP8266**, **ESP32** (ESP32, S3, C3,

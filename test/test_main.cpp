@@ -748,6 +748,30 @@ static void frame_encrypt(uint8_t *f, const uint8_t plain[80]) {
 
 // Changes for 0.3.0 in amis::Reader (review findings A3...)
 static void test_reader_030() {
+  // A11: repetition = same access number AND unchanged FCB; SND_NKE to 0xFF resets it without E5
+  {
+    amis::Reader r;
+    r.set_key_hex(kTestKeyHex);
+    int acks = 0;
+    uint8_t st = feed(r, kFrame1, sizeof(kFrame1), 0, &acks);  // C = 53 (FCV, FCB = 0)
+    CHECK(st & amis::Reader::kReading);
+    uint8_t f[sizeof(kFrame1)];
+    memcpy(f, kFrame1, sizeof(f));
+    f[4] = 0x73;  // FCB toggled, same access number
+    f[99] = static_cast<uint8_t>(f[99] + 0x20);
+    acks = 0;
+    st = feed(r, f, sizeof(f), 1000, &acks);
+    CHECK((st & amis::Reader::kReading) && acks == 1 && r.stats().duplicates == 0);
+    acks = 0;
+    st = feed(r, f, sizeof(f), 2000, &acks);  // same FCB again: repetition
+    CHECK(st == amis::Reader::kSendAck && acks == 1 && r.stats().duplicates == 1);
+    const uint8_t nke_ff[] = {0x10, 0x40, 0xFF, 0x3F, 0x16};
+    acks = 0;
+    st = feed(r, nke_ff, sizeof(nke_ff), 3000, &acks);
+    CHECK(st == amis::Reader::kNothing && acks == 0);
+    st = feed(r, f, sizeof(f), 4000, &acks);  // duplicate state cleared: decoded again
+    CHECK((st & amis::Reader::kReading) && acks == 1 && r.stats().duplicates == 1);
+  }
   // A6: frame without 1.8.0 -> kIncomplete with the full mask, a reading without a mask
   {
     uint8_t f[sizeof(kFrame1)], plain[80];

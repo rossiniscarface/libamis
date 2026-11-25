@@ -28,6 +28,8 @@
 
 ### Changed
 
+- `Reader`: a frame counts as repetition only with the same access number **and** an unchanged FCB (when FCV is
+  set), per EN 13757-2. A SND_NKE to 0xFF also resets the repetition state, without `E5`.
 - `Reader`: default inter-byte timeout 500 ms instead of 200 ms (`now_ms` is the processing time, a stalled main
   loop dropped frames). Docs: the `E5` to a data frame belongs into the M-Bus reply window of about 85 ms.
 
