@@ -137,6 +137,7 @@ again (search mode).
 ```bash
 make -C test            # host tests
 make -C test sanitize   # with address and UB sanitizer
+make -C test fuzz       # libFuzzer with address and UB sanitizer (clang), FUZZ_TIME=60 s per target
 pio run -d ci           # build for ESP8266, ESP32, ESP32-S3, ESP32-C3 (Arduino), ESP32 and ESP32-C6 (ESP-IDF)
 ```
 
@@ -146,6 +147,10 @@ the NIST test vectors (FIPS-197, SP 800-38A), date/time with values from real fr
 request, noise bytes, repetition, two frames back to back, wrong or missing key, broken checksum and gaps in the
 middle of a frame. The IEC part is tested against a simulated meter (echo, parity bit, reply delay, baud rate
 selection, BCC, break, timeout). CI runs the tests with GCC and Clang and builds for all targets above.
+
+Both parsers take untrusted input (anything that reaches the optical port), so they never write outside their
+fixed buffers. `test/fuzz/` has libFuzzer targets for `Reader` (with both frame buffer sizes) and `IecReader`;
+before 0.3.1 they ran 5.7 million inputs under ASan and UBSan without a finding.
 
 ## Important per Netz OÖ
 

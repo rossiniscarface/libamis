@@ -6,3 +6,10 @@ build/
 CLAUDE.md
 amis_test_san_small
 libamis-review-auftrag.md
+test/fuzz_reader
+test/fuzz_reader_small
+test/fuzz_iec
+test/fuzz_corpus/
+crash-*
+leak-*
+timeout-*
