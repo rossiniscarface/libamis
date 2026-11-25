@@ -50,7 +50,7 @@ class IecReader {
   };
 
   // kMeterError: the meter answered with an error telegram (ERxxxx), see meter_error()
-  enum class Error : uint8_t { kNone, kNoIdent, kTimeout, kBcc, kFormat, kBusy, kMeterError };
+  enum class Error : uint8_t { kNone, kNoIdent, kTimeout, kBcc, kFormat, kMeterError };
 
   // Highest wanted data baud rate as IEC code ('0'=300 ... '5'=9600, '6'=19200, '9'=115200).
   // The meter only switches if the acknowledgement repeats exactly the code from its identification
@@ -84,6 +84,7 @@ class IecReader {
 
   // Starts the readout. Returns kSetSerial (switch to 300 Bd 7E1 now); the request "/?!" follows as kSend from
   // the next poll(). Rule for all actions: first send tx(), then switch the baud rate.
+  // While a readout runs (active()), begin() changes nothing and returns kNone: check active() first.
   uint8_t begin(Mode mode, uint32_t now_ms);
   // Received byte (the parity bit is ignored)
   uint8_t push(uint8_t byte, uint32_t now_ms);

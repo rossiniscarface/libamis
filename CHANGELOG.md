@@ -2,6 +2,11 @@
 
 ## 0.3.0 – unreleased
 
+### Breaking changes
+
+- `IecReader::begin()` during a running readout no longer aborts it: it changes nothing and returns `kNone`
+  (check `active()` first). `IecReader::Error::kBusy` and its text are gone.
+
 ### Fixes
 
 - `IecReader`: the total timeout (`set_total_timeout_ms()`, default 120 s) ended a readout with the default

@@ -250,8 +250,8 @@ static void test_iec() {
   CHECK(r.poll(t) == amis::IecReader::kSend);                    // ... then send the request
   const uint8_t *tx = r.tx(&n);
   CHECK(n == 5 && memcmp(tx, "/?!\r\n", 5) == 0);
-  CHECK(r.begin(amis::IecReader::Mode::kReadout, t) == amis::IecReader::kFailed);  // already running
-  CHECK(r.error() == amis::IecReader::Error::kBusy);
+  CHECK(r.begin(amis::IecReader::Mode::kReadout, t) == amis::IecReader::kNone);  // already running: no change
+  CHECK(r.active() && r.error() == amis::IecReader::Error::kNone);
 
   r = amis::IecReader();
   r.set_max_baud_char('6');
@@ -601,6 +601,23 @@ static void iec_start_readout(amis::IecReader &r, uint32_t *t) {
 
 // Changes for 0.3.0 (review findings A1...)
 static void test_iec_030() {
+  // A2: begin() during a running readout leaves it running; the readout then completes normally
+  {
+    amis::IecReader r;
+    uint32_t t = 0;
+    r.begin(amis::IecReader::Mode::kReadout, t);
+    r.poll(t);
+    CHECK(r.begin(amis::IecReader::Mode::kReadout, t) == amis::IecReader::kNone);
+    CHECK(r.active());
+    iec_feed(r, "/SAT6TEST000000000001\r\n", &t);
+    CHECK(r.begin(amis::IecReader::Mode::kIdentOnly, t) == amis::IecReader::kNone && r.active());
+    t += 800;
+    CHECK(r.poll(t) == amis::IecReader::kSend);
+    r.push(0x02, t++);
+    iec_feed(r, "0.0.0(42)\r\n!\r\n\x03", &t);
+    CHECK(r.poll(t + 2100) == amis::IecReader::kDone && !strcmp(r.serial_number(), "42"));
+  }
+
   // A1: billing data set at 300 Bd with default settings (total timeout 120 s): about 400 s of data
   {
     amis::IecReader r;

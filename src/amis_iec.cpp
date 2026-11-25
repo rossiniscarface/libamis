@@ -38,8 +38,7 @@ const char kIecErr1[] AMIS_PROGMEM = "no identification from meter";
 const char kIecErr2[] AMIS_PROGMEM = "timeout";
 const char kIecErr3[] AMIS_PROGMEM = "block check character error";
 const char kIecErr4[] AMIS_PROGMEM = "data line too long or unreadable";
-const char kIecErr5[] AMIS_PROGMEM = "readout already running";
-const char kIecErr6[] AMIS_PROGMEM = "meter reported an error";
+const char kIecErr5[] AMIS_PROGMEM = "meter reported an error";
 const char kIecErrUnknown[] AMIS_PROGMEM = "?";
 }  // namespace
 
@@ -50,8 +49,7 @@ const char *error_str(IecReader::Error e) {
     case IecReader::Error::kTimeout: return detail::pgm_str(kIecErr2);
     case IecReader::Error::kBcc: return detail::pgm_str(kIecErr3);
     case IecReader::Error::kFormat: return detail::pgm_str(kIecErr4);
-    case IecReader::Error::kBusy: return detail::pgm_str(kIecErr5);
-    case IecReader::Error::kMeterError: return detail::pgm_str(kIecErr6);
+    case IecReader::Error::kMeterError: return detail::pgm_str(kIecErr5);
   }
   return detail::pgm_str(kIecErrUnknown);
 }
@@ -92,7 +90,7 @@ uint8_t IecReader::fail_(Error e) {
 }
 
 uint8_t IecReader::begin(Mode mode, uint32_t now_ms) {
-  if (active()) return fail_(Error::kBusy);
+  if (active()) return kNone;  // a readout is running: leave it alone
   mode_ = mode;
   error_ = Error::kNone;
   manufacturer_[0] = 0;
