@@ -1,5 +1,7 @@
 name: test
 # Runs for pushes to main (the README badge shows event=push), pull requests, release tags and on demand.
+permissions:
+  contents: read
 on:
   pull_request:
   push:
@@ -13,7 +15,7 @@ jobs:
       matrix:
         cxx: [g++, clang++]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Tests
         run: make -C test CXX=${{ matrix.cxx }}
       - name: Sanitizer
@@ -33,34 +35,34 @@ jobs:
       matrix:
         env: [esp8266, esp32, esp32s3, esp32c3, esp32c6_idf, esp32_idf]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/cache@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.platformio
           key: pio-${{ matrix.env }}-${{ hashFiles('ci/platformio.ini') }}
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
       - name: Install PlatformIO
-        run: pip install platformio
+        run: pip install platformio==6.2.0
       - name: Build
         run: pio run -d ci -e ${{ matrix.env }}
 
   package:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
       - name: Validate PlatformIO manifest
         run: |
-          pip install platformio
+          pip install platformio==6.2.0
           pio pkg pack -o /tmp
       - name: Arduino lint
         # checks that the url in library.properties is reachable, so only once the repository is public
         if: ${{ !github.event.repository.private }}
-        uses: arduino/arduino-lint-action@v2
+        uses: arduino/arduino-lint-action@4de5fc895deecbda2f6b1cc05de7a8fdd5c4c51f # v2.0.0
         with:
           library-manager: submit
           compliance: strict

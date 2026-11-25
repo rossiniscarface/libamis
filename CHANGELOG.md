@@ -14,6 +14,11 @@
   `IecReader::baud_for_char()` no longer compiles to a lookup table.
 - `-DLIBAMIS_NO_STATS` leaves out the counters (`Stats`, 44 bytes per `Reader`); `stats()` is not available then.
 
+### Repository
+
+- `SECURITY.md` (private vulnerability reporting), Dependabot for the GitHub Actions, actions pinned to commit
+  SHAs, PlatformIO version pinned in CI, workflow token read-only.
+
 ### Tests and docs
 
 - libFuzzer targets for `Reader` and `IecReader` in `test/fuzz/` (`make -C test fuzz`, needs clang); 5.7 million
