@@ -6,6 +6,8 @@
 
 - `IecReader::begin()` during a running readout no longer aborts it: it changes nothing and returns `kNone`
   (check `active()` first). `IecReader::Error::kBusy` and its text are gone.
+- `Reading::meter_id` is now `Reading::header_id`: the M-Bus header carries the secondary address of the reading
+  head, fixed by Netz OÖ 2.4.2.6 (0 on every AMIS), not the meter number. Comments and docs corrected.
 
 ### New
 

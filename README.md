@@ -62,6 +62,10 @@ the block and call `reader.push_error(millis())` instead (no `E5` for that frame
 | `inkasso` | 1.128.0 | Wh (signed, prepayment register) |
 | `time` | meter clock (local time with DST bit), `to_unix_utc()` | |
 | `present` | which fields were in the frame | |
+| `header_id`, `manufacturer`, `version`, `medium` | M-Bus header: address of the **reading head**, the same for every AMIS (Netz OÖ 2.4.2.6) | |
+
+The meter number is **not** in the M-Bus frame (`header_id` is 0). It only comes from the IEC identification or
+register 0.0.0 of the billing data set (see `IecReader` below).
 
 More: `online(now_ms)`, `stats()` (frames, acknowledgements, errors), `last_plaintext()` (for debugging).
 

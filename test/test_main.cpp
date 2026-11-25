@@ -106,7 +106,7 @@ static void test_frames() {
   CHECK(x.inkasso == -42);
   CHECK(x.present == 0x3FF);
   CHECK(x.time.valid && x.time.hour == 9 && x.time.minute == 20 && !x.time.dst);
-  CHECK(x.meter_id == 0x12345678 && x.manufacturer == 0x4C2D && x.access_number == 0x21);
+  CHECK(x.header_id == 0x12345678 && x.manufacturer == 0x4C2D && x.access_number == 0x21);
   CHECK(r.online(2200) && !r.online(9000));
 
   // Same frame again (our E5 got lost): acknowledge again, but do not decode twice
@@ -225,6 +225,7 @@ static void test_netzooe_example() {
   CHECK(x.reactive_power_import_var == 0 && x.reactive_power_export_var == 0);
   CHECK(x.inkasso == 20);
   CHECK(x.present == 0x3FF && x.access_number == 0x0D && x.manufacturer == 0x4C2D);
+  CHECK(x.header_id == 0 && x.version == 0x01 && x.medium == 0x0E);  // reading head, Netz OOe 2.4.2.6
   size_t n = 0;
   const uint8_t *p = r.last_plaintext(&n);
   const uint8_t head[] = {0x2F, 0x2F, 0x06, 0x6D, 0x5F, 0x0C, 0x48, 0xC1, 0x17, 0x1B};  // section 2.4.2.9

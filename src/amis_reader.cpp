@@ -298,7 +298,7 @@ uint8_t Reader::decode_application_(uint8_t *app, size_t len) {
   }
 
   Reading r;
-  r.meter_id = le32(id);
+  r.header_id = le32(id);
   r.manufacturer = static_cast<uint16_t>(man[0] | (man[1] << 8));
   r.version = ver;
   r.medium = med;

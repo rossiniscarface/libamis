@@ -80,11 +80,13 @@ struct Reading {
     return static_cast<int32_t>(power_import_w) - static_cast<int32_t>(power_export_w);
   }
 
-  // From the M-Bus header
-  uint32_t meter_id = 0;        // identification number (BCD, as sent)
-  uint16_t manufacturer = 0;    // manufacturer code (e.g. 0x4C2D = "SAM", Siemens)
-  uint8_t version = 0;
-  uint8_t medium = 0;
+  // From the M-Bus header: the secondary address of the reading head (terminal device), fixed by Netz OOe
+  // 2.4.2.6 and the same for every meter. It is NOT the meter number: that only comes from the IEC
+  // identification or register 0.0.0 of the billing data set (IecReader).
+  uint32_t header_id = 0;       // identification number (BCD, as sent; 0 on the AMIS)
+  uint16_t manufacturer = 0;    // manufacturer code (0x4C2D = "SAM" on the AMIS)
+  uint8_t version = 0;          // 0x01 on the AMIS
+  uint8_t medium = 0;           // 0x0E (bus/system component) on the AMIS
   uint8_t access_number = 0;    // running counter, +1 per frame
 };
 

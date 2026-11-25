@@ -48,13 +48,18 @@ or commands from the M-Bus slave are not allowed and are discarded by the M-Bus 
 | 7–10 | identification number | `00 00 00 00` |
 | 11–12 | manufacturer ID | `2D 4C` (“SAM”) |
 | 13 | version | `01` |
-| 14 | medium | `0E` |
+| 14 | medium | `0E` (bus/system component) |
 | 15 | access number | counts up |
 | 16 | status | `00` |
 | 17–18 | configuration word | `50 05` → 0x0550 |
 | 19–98 | encrypted payload | 80 bytes = 5 AES blocks |
 | 99 | checksum | sum of bytes 4–98 mod 256 |
 | 100 | stop | `16` |
+
+Bytes 7–14 are the secondary address of the **reading head** (terminal device), not of the meter: Netz OÖ
+fixes them for every terminal device (section 2.4.2.6). So `Reading::header_id` is always 0 on a real AMIS. The
+meter number only comes from the IEC identification (`/SAT6<identification>`, Siemens manual 5.2.7) or from
+register 0.0.0 of the billing data set, see `IecReader`.
 
 Configuration word (OMS): bits 8–12 = security mode (**5** = AES-128-CBC), bits 4–7 = number of encrypted
 blocks (**5**).
