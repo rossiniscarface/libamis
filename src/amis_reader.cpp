@@ -7,6 +7,13 @@
 
 #include "amis_pgm.h"
 
+// Counters in Stats; -DLIBAMIS_NO_STATS leaves them out (saves the RAM of Stats in every Reader)
+#ifdef LIBAMIS_NO_STATS
+#define AMIS_COUNT(field) ((void)0)
+#else
+#define AMIS_COUNT(field) (stats_.field++)
+#endif
+
 namespace amis {
 
 namespace {
@@ -161,9 +168,9 @@ bool Reader::online(uint32_t now_ms, uint32_t max_age_ms) const {
 }
 
 uint8_t Reader::push(uint8_t byte, uint32_t now_ms) {
-  stats_.bytes++;
+  AMIS_COUNT(bytes);
   if (len_ > 0 && static_cast<uint32_t>(now_ms - last_byte_ms_) > interbyte_timeout_ms_) {
-    stats_.resyncs++;
+    AMIS_COUNT(resyncs);
     reset();
   }
   last_byte_ms_ = now_ms;
@@ -172,7 +179,7 @@ uint8_t Reader::push(uint8_t byte, uint32_t now_ms) {
 }
 
 void Reader::push_error(uint32_t now_ms) {
-  stats_.line_errors++;
+  AMIS_COUNT(line_errors);
   last_byte_ms_ = now_ms;
   reset();
 }
@@ -194,7 +201,7 @@ uint8_t Reader::feed_(uint8_t b) {
   if (buf_[0] == kStartLong && len_ == 4) {
     if (buf_[1] != buf_[2] || buf_[3] != kStartLong || buf_[1] < 3 ||
         static_cast<size_t>(buf_[1]) + 6 > kMaxFrame) {
-      stats_.resyncs++;
+      AMIS_COUNT(resyncs);
       return restart_from_(1);
     }
     expected_ = static_cast<size_t>(buf_[1]) + 6;
@@ -221,9 +228,9 @@ uint8_t Reader::restart_from_(size_t skip) {
 uint8_t Reader::fail_(Error e) {
   last_error_ = e;
   switch (e) {
-    case Error::kChecksum: stats_.checksum_errors++; break;
-    case Error::kWrongKey: stats_.key_errors++; break;
-    default: stats_.other_errors++; break;
+    case Error::kChecksum: AMIS_COUNT(checksum_errors); break;
+    case Error::kWrongKey: AMIS_COUNT(key_errors); break;
+    default: AMIS_COUNT(other_errors); break;
   }
   return kError;
 }
@@ -232,14 +239,14 @@ uint8_t Reader::fail_(Error e) {
 uint8_t Reader::handle_short_() {
   const uint8_t c = buf_[1], a = buf_[2];
   if (buf_[3] != static_cast<uint8_t>(c + a) || buf_[4] != kStop) {
-    stats_.resyncs++;
+    AMIS_COUNT(resyncs);
     return restart_from_(1);
   }
   reset();
-  stats_.short_frames++;
+  AMIS_COUNT(short_frames);
   if (c == kSndNke && (a == address_ || a == kAddrBroadcastReply)) {
     have_access_ = false;  // communication restarts (also resets the FCB, EN 13757-2)
-    stats_.acks++;
+    AMIS_COUNT(acks);
     return kSendAck;
   }
   if (c == kSndNke && a == kAddrBroadcastNoReply) have_access_ = false;  // same, but no reply to 0xFF
@@ -253,14 +260,14 @@ uint8_t Reader::handle_long_() {
   uint8_t cs = 0;
   for (size_t i = 4; i < n - 2; i++) cs = static_cast<uint8_t>(cs + buf_[i]);
   if (buf_[n - 1] != kStop || buf_[n - 2] != cs) return fail_(Error::kChecksum);
-  stats_.long_frames++;
+  AMIS_COUNT(long_frames);
 
   const uint8_t c = buf_[4], a = buf_[5];
   uint8_t st = kNothing;
   const bool snd_ud = (c & 0x4F) == 0x43;  // 0x53 / 0x73 (FCB toggles)
   if (snd_ud && (a == address_ || a == kAddrBroadcastReply)) {
     st |= kSendAck;  // every formally valid frame is acknowledged, even if its content does not fit
-    stats_.acks++;
+    AMIS_COUNT(acks);
   }
   c_field_ = c;
   return static_cast<uint8_t>(st | decode_application_(buf_ + 6, n - 8));
@@ -285,7 +292,7 @@ uint8_t Reader::decode_application_(uint8_t *app, size_t len) {
   // also keeps the access number then. Already decoded.
   const uint8_t fcb = c_field_ & kFcb;
   if (have_access_ && acc == last_access_ && (!(c_field_ & kFcv) || fcb == last_fcb_)) {
-    stats_.duplicates++;
+    AMIS_COUNT(duplicates);
     return kNothing;
   }
 
@@ -328,7 +335,7 @@ uint8_t Reader::decode_application_(uint8_t *app, size_t len) {
   last_access_ = acc;
   last_fcb_ = fcb;
   last_error_ = Error::kNone;
-  stats_.readings++;
+  AMIS_COUNT(readings);
   return kReading;
 }
 

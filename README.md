@@ -17,7 +17,8 @@ The library handles everything that makes the AMIS special, but it does **not to
 - Repeated frames (lost acknowledgement: same access number and FCB) are detected and not reported twice
 
 No heap, no exceptions, no RTTI, no Arduino dependency, C++17. Small RAM footprint: on the ESP8266 tables and
-texts stay in flash, and `-DLIBAMIS_MAX_FRAME=128` shrinks the frame buffer to what the AMIS needs. Builds for **ESP8266**, **ESP32** (ESP32, S3, C3,
+texts stay in flash, and `-DLIBAMIS_MAX_FRAME=128` shrinks the frame buffer to what the AMIS needs; `-DLIBAMIS_NO_STATS` leaves out the
+counters of `stats()` (44 bytes per `Reader`). Builds for **ESP8266**, **ESP32** (ESP32, S3, C3,
 C6, …), other microcontrollers and the PC.
 
 **Status:** version 0.3.0. Tested on the PC (including the example telegram from the Netz OÖ specification) and

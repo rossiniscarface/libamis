@@ -5,6 +5,7 @@ build/
 *.o
 CLAUDE.md
 amis_test_san_small
+amis_test_nostats
 libamis-review-auftrag.md
 test/fuzz_reader
 test/fuzz_reader_small

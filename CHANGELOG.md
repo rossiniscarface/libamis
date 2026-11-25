@@ -8,6 +8,12 @@
   `Error::kNotEncrypted`. Before, anyone with access to the optical port could feed in made-up values without
   the key. Without a key, unencrypted frames are still read.
 
+### RAM
+
+- On the ESP8266 two small tables no longer live in RAM (50 bytes): the AES round constants are computed, and
+  `IecReader::baud_for_char()` no longer compiles to a lookup table.
+- `-DLIBAMIS_NO_STATS` leaves out the counters (`Stats`, 44 bytes per `Reader`); `stats()` is not available then.
+
 ### Tests and docs
 
 - libFuzzer targets for `Reader` and `IecReader` in `test/fuzz/` (`make -C test fuzz`, needs clang); 5.7 million

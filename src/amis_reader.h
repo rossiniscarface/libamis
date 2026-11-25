@@ -179,7 +179,10 @@ class Reader {
 
   const Reading &reading() const { return reading_; }
   Error last_error() const { return last_error_; }
+#ifndef LIBAMIS_NO_STATS
+  // Counters since construction. Not available with -DLIBAMIS_NO_STATS (saves sizeof(Stats) = 44 bytes).
   const Stats &stats() const { return stats_; }
+#endif
   // Is the last valid reading younger than max_age_ms?
   bool online(uint32_t now_ms, uint32_t max_age_ms = 5000) const;
 
@@ -226,7 +229,9 @@ class Reader {
   uint8_t c_field_ = 0;  // C field of the long frame being decoded
 
   Error last_error_ = Error::kNone;
+#ifndef LIBAMIS_NO_STATS
   Stats stats_;
+#endif
 };
 
 }  // namespace amis
