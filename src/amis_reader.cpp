@@ -97,6 +97,7 @@ const char kErr5[] AMIS_PROGMEM = "no key set";
 const char kErr6[] AMIS_PROGMEM = "wrong key";
 const char kErr7[] AMIS_PROGMEM = "unparseable data records";
 const char kErr8[] AMIS_PROGMEM = "no known values";
+const char kErr9[] AMIS_PROGMEM = "required values missing";
 const char kErrUnknown[] AMIS_PROGMEM = "?";
 }  // namespace
 
@@ -111,6 +112,7 @@ const char *error_str(Error e) {
     case Error::kWrongKey: return detail::pgm_str(kErr6);
     case Error::kRecordFormat: return detail::pgm_str(kErr7);
     case Error::kNoData: return detail::pgm_str(kErr8);
+    case Error::kIncomplete: return detail::pgm_str(kErr9);
   }
   return detail::pgm_str(kErrUnknown);
 }
@@ -305,6 +307,7 @@ uint8_t Reader::decode_application_(uint8_t *app, size_t len) {
   r.access_number = acc;
   if (!parse_records_(data, dlen, r)) return fail_(Error::kRecordFormat);
   if (r.present == 0) return fail_(Error::kNoData);
+  if ((r.present & required_) != required_) return fail_(Error::kIncomplete);
 
   reading_ = r;
   have_reading_ = true;

@@ -73,6 +73,7 @@ struct Reading {
     kReactivePowerImport = 1 << 7,
     kReactivePowerExport = 1 << 8,
     kInkasso = 1 << 9,
+    kAll = 0x3FF,  // all of the above
   };
   uint16_t present = 0;
   bool has(Field f) const { return (present & f) != 0; }
@@ -102,6 +103,7 @@ enum class Error : uint8_t {
   kWrongKey,                // no 2F 2F after decryption -> wrong key
   kRecordFormat,            // data records not parseable
   kNoData,                  // frame without any known value
+  kIncomplete,              // a value required with set_required_fields() is missing
 };
 // Short English text for an error. On the ESP8266 the texts live in flash and are copied into one shared
 // buffer, so the result is only valid until the next error_str() call.
@@ -149,6 +151,11 @@ class Reader {
   // tolerates a stalled main loop and still separates two frames.
   void set_interbyte_timeout_ms(uint32_t ms) { interbyte_timeout_ms_ = ms; }
 
+  // Fields (Reading::Field bits) every frame must contain; if one is missing, push() reports kError with
+  // Error::kIncomplete instead of kReading. Default 0 = no requirement. The AMIS always sends all 10 values
+  // (Netz OOe table 2), so Reading::kAll is a good choice.
+  void set_required_fields(uint16_t mask) { required_ = mask; }
+
   // Process one received byte. now_ms = monotonic time in ms (millis(), esp_timer, ...).
   // On kSendAck acknowledge immediately (call byte by byte so exactly one E5 goes out per frame).
   uint8_t push(uint8_t byte, uint32_t now_ms);
@@ -190,6 +197,7 @@ class Reader {
   Aes128 aes_;
   bool has_key_ = false;
   uint8_t address_ = 0xF0;
+  uint16_t required_ = 0;
   uint32_t interbyte_timeout_ms_ = 500;
 
   uint8_t buf_[kMaxFrame];

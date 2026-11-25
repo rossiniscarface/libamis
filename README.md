@@ -32,13 +32,15 @@ against a simulated meter and **tested at a real TD-3511**: M-Bus values, serial
 
 amis::Reader reader;
 reader.set_key_hex("00112233445566778899AABBCCDDEEFF");   // your own key from the Netz OÖ portal
+reader.set_required_fields(amis::Reading::kAll);          // optional: only complete frames count
 
 // for every byte from the reading head:
 uint8_t st = reader.push(byte, millis());
 if (st & amis::Reader::kSendAck) uart_write(amis::Reader::kAck);   // send 0xE5 immediately
 if (st & amis::Reader::kReading) {
   const amis::Reading &r = reader.reading();
-  // r.energy_import_wh (1.8.0), r.power_import_w (1.7.0), r.power_balance_w(), r.time, ...
+  if (r.has(amis::Reading::kEnergyImport)) publish(r.energy_import_wh);   // 1.8.0
+  // r.power_import_w (1.7.0), r.power_balance_w(), r.time, ... (a missing field stays 0: check has())
 }
 if (st & amis::Reader::kError) log(amis::error_str(reader.last_error()));
 ```

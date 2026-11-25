@@ -642,8 +642,68 @@ static void test_iec_030() {
   }
 }
 
+// Test frames derived from kFrame1 (101 bytes: header 0..18, encrypted payload 19..98, CS, 16)
+static void frame_fix_checksum(uint8_t *f) {
+  uint8_t cs = 0;
+  for (size_t i = 4; i < 99; i++) cs = static_cast<uint8_t>(cs + f[i]);
+  f[99] = cs;
+}
+static void frame_iv(const uint8_t *f, uint8_t iv[16]) {
+  iv[0] = f[11];
+  iv[1] = f[12];
+  memcpy(iv + 2, f + 7, 4);
+  iv[6] = f[13];
+  iv[7] = f[14];
+  memset(iv + 8, f[15], 8);
+}
+// Decrypts the payload of f into plain[80]
+static void frame_decrypt(const uint8_t *f, uint8_t plain[80]) {
+  amis::Aes128 aes;
+  uint8_t key[16], iv[16];
+  hex2bin("00112233445566778899aabbccddeeff", key);
+  aes.set_key(key);
+  frame_iv(f, iv);
+  memcpy(plain, f + 19, 80);
+  aes.cbc_decrypt(plain, 80, iv);
+}
+// Encrypts plain[80] into the payload of f and fixes the checksum
+static void frame_encrypt(uint8_t *f, const uint8_t plain[80]) {
+  amis::Aes128 aes;
+  uint8_t key[16], iv[16];
+  hex2bin("00112233445566778899aabbccddeeff", key);
+  aes.set_key(key);
+  frame_iv(f, iv);
+  memcpy(f + 19, plain, 80);
+  aes.cbc_encrypt(f + 19, 80, iv);
+  frame_fix_checksum(f);
+}
+
 // Changes for 0.3.0 in amis::Reader (review findings A3...)
 static void test_reader_030() {
+  // A6: frame without 1.8.0 -> kIncomplete with the full mask, a reading without a mask
+  {
+    uint8_t f[sizeof(kFrame1)], plain[80];
+    memcpy(f, kFrame1, sizeof(f));
+    frame_decrypt(f, plain);
+    CHECK(plain[0] == 0x2F && plain[10] == 0x04 && plain[11] == 0x03);  // 2F 2F, time (2+6), 1.8.0 = 04 03
+    plain[11] = 0x13;  // 04 13 = volume: unknown to the AMIS table, skipped
+    frame_encrypt(f, plain);
+    amis::Reader r;
+    r.set_key_hex(kTestKeyHex);
+    int acks = 0;
+    uint8_t st = feed(r, f, sizeof(f), 0, &acks);
+    CHECK((st & amis::Reader::kReading) && !r.reading().has(amis::Reading::kEnergyImport));
+    CHECK(r.reading().energy_import_wh == 0 && r.reading().has(amis::Reading::kEnergyExport));
+    amis::Reader r2;
+    r2.set_key_hex(kTestKeyHex);
+    r2.set_required_fields(amis::Reading::kAll);
+    acks = 0;
+    st = feed(r2, f, sizeof(f), 0, &acks);
+    CHECK(st == (amis::Reader::kSendAck | amis::Reader::kError) && acks == 1);
+    CHECK(r2.last_error() == amis::Error::kIncomplete);
+    st = feed(r2, kFrame2, sizeof(kFrame2), 1000, &acks);  // complete frame
+    CHECK(st & amis::Reader::kReading);
+  }
   // A5: default inter-byte timeout 500 ms: a 300 ms stall in the middle of a frame is fine, 1 s is a resync
   {
     amis::Reader r;

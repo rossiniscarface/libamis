@@ -15,6 +15,9 @@
   progress is dropped (no `E5`). README and header describe the integration rule (check the UART error flag
   before a block goes to `push()`).
 
+- `Reader::set_required_fields()` and `Error::kIncomplete`: a frame without a required value is reported as an
+  error instead of a reading with zeros (default: no requirement). `Reading::kAll` names all 10 fields.
+
 ### Changed
 
 - `Reader`: default inter-byte timeout 500 ms instead of 200 ms (`now_ms` is the processing time, a stalled main
