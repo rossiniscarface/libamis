@@ -578,12 +578,59 @@ static void test_iec() {
   CHECK(r7.poll(t + 2100) == amis::IecReader::kDone && !strcmp(r7.serial_number(), "42"));
 }
 
+// Feeds s with ms_per_char per character and polls after every character, like a main loop does.
+// Returns all actions; *done_or_failed is set at the first kDone or kFailed.
+static uint8_t iec_feed_slow(amis::IecReader &r, const char *s, uint32_t *t, uint32_t ms_per_char) {
+  uint8_t all = 0;
+  for (; *s; s++) {
+    all |= r.push(static_cast<uint8_t>(*s), *t);
+    *t += ms_per_char;
+    all |= r.poll(*t);
+  }
+  return all;
+}
+
+// Until the first acknowledgement has been sent (default settings): request, identification, ACK after 700 ms
+static void iec_start_readout(amis::IecReader &r, uint32_t *t) {
+  r.begin(amis::IecReader::Mode::kReadout, *t);
+  r.poll(*t);
+  iec_feed(r, "/SAT6TEST000000000001\r\n", t);
+  *t += 800;
+  r.poll(*t);
+}
+
+// Changes for 0.3.0 (review findings A1...)
+static void test_iec_030() {
+  // A1: billing data set at 300 Bd with default settings (total timeout 120 s): about 400 s of data
+  {
+    amis::IecReader r;
+    uint32_t t = 0;
+    iec_start_readout(r, &t);
+    uint8_t all = r.push(0x02, t);  // STX
+    uint8_t bcc = 0;
+    char line[40];
+    for (int i = 0; i < 380 && !(all & (amis::IecReader::kDone | amis::IecReader::kFailed)); i++) {
+      snprintf(line, sizeof(line), "1.8.1*%02d(%06d.000*kWh)\r\n", i % 100, i);  // 26 characters, about 325 s in all
+      for (const char *p = line; *p; p++) bcc ^= static_cast<uint8_t>(*p);
+      all |= iec_feed_slow(r, line, &t, 33);
+    }
+    CHECK(t > 320000 && !(all & amis::IecReader::kFailed) && r.active());
+    const char end[] = "!\r\n\x03";
+    for (const char *p = end; *p; p++) bcc ^= static_cast<uint8_t>(*p);
+    all |= iec_feed_slow(r, end, &t, 33);
+    const char b[2] = {static_cast<char>(bcc), 0};
+    all |= iec_feed_slow(r, b, &t, 33);
+    CHECK((all & amis::IecReader::kDone) && !(all & amis::IecReader::kFailed) && !r.active());
+  }
+}
+
 int main() {
   test_aes();
   test_datetime();
   test_frames();
   test_netzooe_example();
   test_iec();
+  test_iec_030();
   printf("%d checks passed, %d failed\n", g_ok, g_fail);
   return g_fail ? 1 : 0;
 }

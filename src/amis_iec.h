@@ -78,7 +78,8 @@ class IecReader {
   void set_send_ack(bool on) { send_ack_ = on; }
   // Device address for the request ("/?<address>!"), empty = general address
   void set_address(const char *addr);
-  // Limit the total duration (default 120 s)
+  // Limit the time from begin() until the data starts (default 120 s). It does not apply while data arrives:
+  // then the readout ends if no character comes for 2 s.
   void set_total_timeout_ms(uint32_t ms) { total_timeout_ms_ = ms; }
 
   // Starts the readout. Returns kSetSerial (switch to 300 Bd 7E1 now); the request "/?!" follows as kSend from

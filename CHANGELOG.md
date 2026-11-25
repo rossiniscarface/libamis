@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0 – unreleased
+
+### Fixes
+
+- `IecReader`: the total timeout (`set_total_timeout_ms()`, default 120 s) ended a readout with the default
+  settings in the middle of the billing data set (about 7 min at 300 Bd). It now only applies until the data
+  starts; while data arrives, the 2 s character timeout guards the readout.
+
 ## 0.2.3 – 2026-11-25
 
 Fixes in `IecReader` from a code review:

@@ -80,7 +80,8 @@ The request is repeated up to 3 times, 5 s apart: the meter only wakes up its IE
 character, and a real TD-3511 answers only after it has given up the M-Bus session (about 10 s). It refuses the
 first acknowledgement with `ER0007` and sends the data after the repeated one, without STX; libamis handles both
 (`set_ack_tries()`, `set_ack_retry_ms()`). An error telegram that remains (`ERxxxx`, with or without brackets)
-ends the readout with `Error::kMeterError` and `meter_error()`. Details: [docs/protocol.md](docs/protocol.md).
+ends the readout with `Error::kMeterError` and `meter_error()`. `set_total_timeout_ms()` (default 120 s) limits
+the time until the data starts; while data arrives, the readout only ends if no character comes for 2 s. Details: [docs/protocol.md](docs/protocol.md).
 
 ```cpp
 amis::IecReader iec;

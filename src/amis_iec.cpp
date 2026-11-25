@@ -320,7 +320,11 @@ uint8_t IecReader::push(uint8_t byte, uint32_t now_ms) {
 
 uint8_t IecReader::poll(uint32_t now_ms) {
   if (state_ == State::kIdle) return kNone;
-  if (static_cast<uint32_t>(now_ms - start_ms_) > total_timeout_ms_) return fail_(Error::kTimeout);
+  // The total timeout only covers the time up to the data: the billing data set alone takes about 7 min at
+  // 300 Bd. While data arrives, the character timeout guards the readout.
+  if (state_ != State::kData && state_ != State::kWaitBcc &&
+      static_cast<uint32_t>(now_ms - start_ms_) > total_timeout_ms_)
+    return fail_(Error::kTimeout);
   const uint32_t in_state = now_ms - state_ms_;
   switch (state_) {
     case State::kWaitIdent:
