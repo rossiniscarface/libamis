@@ -1,6 +1,6 @@
 {
   "name": "libamis",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Reader core for the Siemens AMIS smart meter (TD-3511/TD-3512, Netz Oberoesterreich): M-Bus over the optical interface, E5 acknowledgement, AES-128 decryption, OBIS values. No hardware access, no heap.",
   "keywords": ["amis", "smartmeter", "smart-meter", "m-bus", "mbus", "oms", "netz-ooe", "siemens", "td-3511", "energy"],
   "repository": { "type": "git", "url": "https://github.com/rossiniscarface/libamis.git" },
