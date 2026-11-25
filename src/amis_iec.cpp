@@ -68,11 +68,16 @@ uint32_t IecReader::baud_for_char(char z) {
   }
 }
 
-void IecReader::set_address(const char *addr) {
-  size_t n = addr ? strlen(addr) : 0;
-  if (n > 32) n = 32;
-  memcpy(address_, addr ? addr : "", n);
+bool IecReader::set_address(const char *addr) {
+  if (!addr) addr = "";
+  size_t n = 0;
+  for (; addr[n]; n++) {
+    const char c = addr[n];
+    if (n >= 32 || !((c >= '0' && c <= '9') || is_letter(c) || c == ' ')) return false;
+  }
+  memcpy(address_, addr, n);
   address_[n] = 0;
+  return true;
 }
 
 void IecReader::set_tx_(const char *s) {

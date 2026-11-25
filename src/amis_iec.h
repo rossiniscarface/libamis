@@ -77,8 +77,9 @@ class IecReader {
   // Readout without acknowledgement (manual fig. 5-1): after the identification nothing is sent, the meter sends
   // the data at 300 Bd by itself after its timeout.
   void set_send_ack(bool on) { send_ack_ = on; }
-  // Device address for the request ("/?<address>!"), empty = general address
-  void set_address(const char *addr);
+  // Device address for the request ("/?<address>!"), empty = general address. At most 32 characters, only
+  // digits, letters and spaces (manual 5.2.8.1); otherwise returns false and keeps the previous address.
+  bool set_address(const char *addr);
   // Limit the time from begin() until the data starts (default 120 s). It does not apply while data arrives:
   // then the readout ends if no character comes for 2 s.
   void set_total_timeout_ms(uint32_t ms) { total_timeout_ms_ = ms; }

@@ -602,6 +602,21 @@ static void iec_start_readout(amis::IecReader &r, uint32_t *t) {
 
 // Changes for 0.3.0 (review findings A1...)
 static void test_iec_030() {
+  // A10: set_address() checks the characters (digits, letters, space) and the length (32)
+  {
+    amis::IecReader r;
+    size_t n = 0;
+    CHECK(r.set_address("12 AB"));
+    CHECK(!r.set_address("1!2"));
+    CHECK(!r.set_address("123456789012345678901234567890123"));  // 33 characters
+    CHECK(r.set_address("12345678901234567890123456789012") && r.set_address("12 AB"));
+    uint32_t t = 0;
+    r.begin(amis::IecReader::Mode::kIdentOnly, t);
+    r.poll(t);
+    const uint8_t *tx = r.tx(&n);
+    CHECK(n == 10 && memcmp(tx, "/?12 AB!\r\n", 10) == 0);  // the rejected addresses changed nothing
+    CHECK(r.set_address(nullptr) && r.set_address(""));
+  }
   // A9: "/" followed by noise once a second: the request is still repeated after 5 s
   {
     amis::IecReader r;
