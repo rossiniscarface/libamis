@@ -602,6 +602,33 @@ static void iec_start_readout(amis::IecReader &r, uint32_t *t) {
 
 // Changes for 0.3.0 (review findings A1...)
 static void test_iec_030() {
+  // A8: a data line of 200 characters is truncated and counted, the readout goes on
+  {
+    amis::IecReader r;
+    uint32_t t = 0;
+    iec_start_readout(r, &t);
+    r.push(0x02, t++);
+    char longline[220];
+    memset(longline, 'X', 200);
+    memcpy(longline, "1.8.0(", 6);
+    strcpy(longline + 200, ")\r\n");
+    const char *rest = "0.0.0(42)\r\n!\r\n\x03";
+    uint8_t bcc = 0;
+    for (const char *p = longline; *p; p++) bcc ^= static_cast<uint8_t>(*p);
+    for (const char *p = rest; *p; p++) bcc ^= static_cast<uint8_t>(*p);
+    uint8_t all = 0;
+    bool saw_trunc = false;
+    for (const char *p = longline; *p; p++) {
+      const uint8_t a = r.push(static_cast<uint8_t>(*p), t++);
+      if (a & amis::IecReader::kRawLine) saw_trunc = r.raw_line_truncated() && strlen(r.raw_line()) == 95;
+      all |= a;
+    }
+    CHECK(saw_trunc && !(all & amis::IecReader::kLine) && r.active());
+    all = iec_feed(r, rest, &t);
+    CHECK((all & amis::IecReader::kLine) && !r.raw_line_truncated());
+    CHECK(r.push(bcc, t++) == amis::IecReader::kDone);
+    CHECK(r.truncated_lines() == 1 && !strcmp(r.serial_number(), "42"));
+  }
   // A2: begin() during a running readout leaves it running; the readout then completes normally
   {
     amis::IecReader r;

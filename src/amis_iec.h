@@ -50,6 +50,7 @@ class IecReader {
   };
 
   // kMeterError: the meter answered with an error telegram (ERxxxx), see meter_error()
+  // kFormat is no longer reported since 0.3.0 (an overlong line is truncated, see raw_line_truncated())
   enum class Error : uint8_t { kNone, kNoIdent, kTimeout, kBcc, kFormat, kMeterError };
 
   // Highest wanted data baud rate as IEC code ('0'=300 ... '5'=9600, '6'=19200, '9'=115200).
@@ -101,6 +102,10 @@ class IecReader {
   const IecLine &line() const { return line_; }
   // Last data line exactly as received, without CR LF. Only valid right after push() returned kRawLine.
   const char *raw_line() const { return buf_; }
+  // The last raw line was longer than 95 characters and is cut off (it is not reported as kLine). Such a line
+  // does not end the readout; truncated_lines() counts them since begin().
+  bool raw_line_truncated() const { return raw_truncated_; }
+  uint16_t truncated_lines() const { return truncated_lines_; }
   Error error() const { return error_; }
 
   // Result of the identification, e.g. "SAT" / '6' / "2351102623000045"
@@ -140,6 +145,9 @@ class IecReader {
   bool uart_fast_ = false;  // the caller's UART is at a data baud rate above 300 Bd
   bool skip_echo_ = false;  // ignoring an echo of our acknowledgement up to LF
   bool err_line_ = false;   // the last line was an error telegram
+  bool truncated_ = false;  // the current data line is longer than buf_
+  bool raw_truncated_ = false;  // the last raw line was truncated
+  uint16_t truncated_lines_ = 0;
   uint8_t acks_sent_ = 0;
   uint8_t requests_sent_ = 0;
   char meter_error_[9] = {0};

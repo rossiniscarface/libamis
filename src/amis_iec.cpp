@@ -102,6 +102,8 @@ uint8_t IecReader::begin(Mode mode, uint32_t now_ms) {
   uart_fast_ = false;
   skip_echo_ = false;
   err_line_ = false;
+  truncated_ = false;
+  truncated_lines_ = 0;
   serial_[0] = 0;
   memset(&line_, 0, sizeof(line_));
   len_ = 0;
@@ -188,6 +190,14 @@ uint8_t IecReader::handle_data_line_() {
 }
 
 uint8_t IecReader::data_line_() {
+  raw_truncated_ = truncated_;
+  if (truncated_) {
+    // too long for buf_: no parsed line (the values may be cut off), only the raw line, marked as truncated
+    truncated_lines_++;
+    buf_[len_] = 0;
+    err_line_ = false;
+    return kRawLine;
+  }
   const uint8_t r = handle_data_line_();
   if (err_line_) return r;  // error telegrams are no data lines
   if (r & kLine) meter_error_[0] = 0;  // data follows after all: the error telegram no longer applies
@@ -274,6 +284,7 @@ uint8_t IecReader::push(uint8_t byte, uint32_t now_ms) {
         bcc_ = 0;
         len_ = 0;
         no_stx_ = false;
+        truncated_ = false;
         return kNone;
       }
       // A real TD-351x sends the data set after a repeated acknowledgement without STX, starting directly
@@ -285,6 +296,7 @@ uint8_t IecReader::push(uint8_t byte, uint32_t now_ms) {
       bcc_ = 0;
       len_ = 0;
       no_stx_ = true;
+      truncated_ = false;
       [[fallthrough]];  // process this character as data
 
     case State::kData:
@@ -293,16 +305,21 @@ uint8_t IecReader::push(uint8_t byte, uint32_t now_ms) {
         // a line without CR LF before ETX, e.g. the error telegram STX (ERxxxx) ETX BCC
         const uint8_t r = (len_ > 0) ? data_line_() : static_cast<uint8_t>(kNone);
         len_ = 0;
+        truncated_ = false;
         state_ = State::kWaitBcc;
         return r;
       }
       if (c == '\n') {
         const uint8_t r = (len_ > 0) ? data_line_() : static_cast<uint8_t>(kNone);
         len_ = 0;
+        truncated_ = false;
         return r;
       }
       if (c == '\r') return kNone;
-      if (len_ >= sizeof(buf_) - 1) return fail_(Error::kFormat);
+      if (len_ >= sizeof(buf_) - 1) {
+        truncated_ = true;  // keep reading: drop the rest of this line
+        return kNone;
+      }
       buf_[len_++] = c;
       return kNone;
 

@@ -94,7 +94,8 @@ character, and a real TD-3511 answers only after it has given up the M-Bus sessi
 first acknowledgement with `ER0007` and sends the data after the repeated one, without STX; libamis handles both
 (`set_ack_tries()`, `set_ack_retry_ms()`). An error telegram that remains (`ERxxxx`, with or without brackets)
 ends the readout with `Error::kMeterError` and `meter_error()`. `set_total_timeout_ms()` (default 120 s) limits
-the time until the data starts; while data arrives, the readout only ends if no character comes for 2 s. Details: [docs/protocol.md](docs/protocol.md).
+the time until the data starts; while data arrives, the readout only ends if no character comes for 2 s. A data
+line longer than 95 characters is cut off (`raw_line_truncated()`, `truncated_lines()`), the readout goes on. Details: [docs/protocol.md](docs/protocol.md).
 
 ```cpp
 amis::IecReader iec;
