@@ -164,6 +164,12 @@ uint8_t Reader::push(uint8_t byte, uint32_t now_ms) {
   return feed_(byte);
 }
 
+void Reader::push_error(uint32_t now_ms) {
+  stats_.line_errors++;
+  last_byte_ms_ = now_ms;
+  reset();
+}
+
 uint8_t Reader::feed_(uint8_t b) {
   if (len_ == 0) {
     // Only a start character begins a frame; drop anything else (noise, echo of our own E5)

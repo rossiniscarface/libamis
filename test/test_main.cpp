@@ -641,11 +641,59 @@ static void test_iec_030() {
   }
 }
 
+// Changes for 0.3.0 in amis::Reader (review findings A3...)
+static void test_reader_030() {
+  // A3: UART error in the middle of a frame -> frame dropped, no E5, no reading; the next frame is read
+  {
+    amis::Reader r;
+    r.set_key_hex(kTestKeyHex);
+    int acks = 0;
+    uint8_t st = feed(r, kFrame1, 50, 0, &acks);
+    r.push_error(50);
+    st |= feed(r, kFrame1 + 50, sizeof(kFrame1) - 50, 51, &acks);
+    CHECK(!(st & (amis::Reader::kSendAck | amis::Reader::kReading)) && acks == 0);
+    CHECK(r.stats().line_errors == 1);
+    st = feed(r, kFrame2, sizeof(kFrame2), 1000, &acks);
+    CHECK((st & amis::Reader::kReading) && acks == 1);
+  }
+  // A3: blind spot of the 8-bit checksum: bit k set in one byte and cleared in another keeps the sum
+  {
+    uint8_t f[sizeof(kFrame1)];
+    memcpy(f, kFrame1, sizeof(f));
+    size_t bi = 0, bj = 0;
+    uint8_t mask = 0;
+    for (size_t i = 19; i < sizeof(f) - 2 && !mask; i++)  // encrypted payload
+      for (size_t j = i + 1; j < sizeof(f) - 2 && !mask; j++)
+        for (int k = 0; k < 8 && !mask; k++)
+          if (!(f[i] & (1 << k)) && (f[j] & (1 << k))) {
+            bi = i;
+            bj = j;
+            mask = static_cast<uint8_t>(1 << k);
+          }
+    CHECK(mask != 0);
+    f[bi] = static_cast<uint8_t>(f[bi] | mask);
+    f[bj] = static_cast<uint8_t>(f[bj] & ~mask);
+    amis::Reader r;
+    r.set_key_hex(kTestKeyHex);
+    int acks = 0;
+    feed(r, f, sizeof(f), 0, &acks);
+    CHECK(acks == 1);  // checksum still fits: acknowledged without push_error()
+    amis::Reader r2;
+    r2.set_key_hex(kTestKeyHex);
+    acks = 0;
+    feed(r2, f, bi, 0, &acks);
+    r2.push_error(static_cast<uint32_t>(bi));  // the UART flagged the block with the damaged byte
+    feed(r2, f + bi + 1, sizeof(f) - bi - 1, static_cast<uint32_t>(bi + 1), &acks);
+    CHECK(acks == 0 && r2.stats().line_errors == 1);
+  }
+}
+
 int main() {
   test_aes();
   test_datetime();
   test_frames();
   test_netzooe_example();
+  test_reader_030();
   test_iec();
   test_iec_030();
   printf("%d checks passed, %d failed\n", g_ok, g_fail);

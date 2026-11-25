@@ -114,6 +114,7 @@ struct Stats {
   uint32_t key_errors = 0;
   uint32_t other_errors = 0;
   uint32_t resyncs = 0;         // byte gap or garbage -> frame search restarted
+  uint32_t line_errors = 0;     // UART errors reported with push_error()
 };
 
 class Reader {
@@ -145,6 +146,15 @@ class Reader {
   // Process one received byte. now_ms = monotonic time in ms (millis(), esp_timer, ...).
   // On kSendAck acknowledge immediately (call byte by byte so exactly one E5 goes out per frame).
   uint8_t push(uint8_t byte, uint32_t now_ms);
+
+  // Report a UART line error (parity, framing or overrun) seen while receiving. Drops the frame in progress:
+  // no E5, no reading. Counted in Stats::line_errors.
+  // M-Bus (EN 13757-2, format FT 1.2) relies on the even parity of every character together with the checksum:
+  // the 8-bit sum alone misses two bit errors that cancel out. So read the UART in blocks, check its error
+  // flag BEFORE the block goes to push(), and on an error drop the block and call push_error() instead.
+  // ESP8266 Arduino: Serial.hasRxError() / Serial.hasOverrun(); ESP-IDF: events UART_PARITY_ERR,
+  // UART_FRAME_ERR, UART_FIFO_OVF; Arduino-ESP32: HardwareSerial::onReceiveError().
+  void push_error(uint32_t now_ms);
 
   const Reading &reading() const { return reading_; }
   Error last_error() const { return last_error_; }

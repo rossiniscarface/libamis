@@ -7,6 +7,12 @@
 - `IecReader::begin()` during a running readout no longer aborts it: it changes nothing and returns `kNone`
   (check `active()` first). `IecReader::Error::kBusy` and its text are gone.
 
+### New
+
+- `Reader::push_error()` and `Stats::line_errors`: report a UART parity, framing or overrun error, the frame in
+  progress is dropped (no `E5`). README and header describe the integration rule (check the UART error flag
+  before a block goes to `push()`).
+
 ### Fixes
 
 - `IecReader`: the total timeout (`set_total_timeout_ms()`, default 120 s) ended a readout with the default
