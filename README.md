@@ -62,7 +62,7 @@ the block and call `reader.push_error(millis())` instead (no `E5` for that frame
 | `power_import_w` / `power_export_w` | 1.7.0 / 2.7.0 | W |
 | `reactive_power_import_var` / `reactive_power_export_var` | 3.7.0 / 4.7.0 | var |
 | `inkasso` | 1.128.0 | Wh (signed, prepayment register) |
-| `time` | meter clock (local time with DST bit), `to_unix_utc()` | |
+| `time` | meter clock (local time with DST bit), `to_unix_utc()`, `raw` (the 6 bytes as sent) | |
 | `present` | which fields were in the frame | |
 | `header_id`, `manufacturer`, `version`, `medium` | M-Bus header: address of the **reading head**, the same for every AMIS (Netz OÖ 2.4.2.6) | |
 

@@ -62,6 +62,7 @@ static void test_datetime() {
   CHECK(t.decode_type_i(w));
   CHECK(t.year == 2026 && t.month == 3 && t.day == 28 && t.hour == 9 && t.minute == 20 && t.second == 15);
   CHECK(t.weekday == 6 && t.week == 13 && !t.dst);
+  CHECK(memcmp(t.raw, w, 6) == 0);  // raw bytes kept (A13)
   CHECK(t.to_unix_utc() == 1774686015LL);  // 2026-03-28T08:20:15Z
   const uint8_t s[6] = {0x77, 0x39, 0xF7, 0x5D, 0x33, 0x0D};
   CHECK(t.decode_type_i(s));
@@ -226,6 +227,8 @@ static void test_netzooe_example() {
   CHECK(x.inkasso == 20);
   CHECK(x.present == 0x3FF && x.access_number == 0x0D && x.manufacturer == 0x4C2D);
   CHECK(x.header_id == 0 && x.version == 0x01 && x.medium == 0x0E);  // reading head, Netz OOe 2.4.2.6
+  const uint8_t traw[6] = {0x5F, 0x0C, 0x48, 0xC1, 0x17, 0x1B};  // section 2.4.2.9
+  CHECK(memcmp(x.time.raw, traw, 6) == 0);
   size_t n = 0;
   const uint8_t *p = r.last_plaintext(&n);
   const uint8_t head[] = {0x2F, 0x2F, 0x06, 0x6D, 0x5F, 0x0C, 0x48, 0xC1, 0x17, 0x1B};  // section 2.4.2.9

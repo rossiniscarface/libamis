@@ -68,6 +68,7 @@ int64_t days_from_civil(int y, unsigned m, unsigned d) {
 // ---------------------------------------------------------------------------------------------------------
 
 bool DateTime::decode_type_i(const uint8_t b[6]) {
+  memcpy(raw, b, sizeof(raw));
   second = b[0] & 0x3F;
   dst = (b[0] & 0x40) != 0;
   minute = b[1] & 0x3F;

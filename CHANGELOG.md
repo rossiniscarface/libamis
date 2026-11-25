@@ -26,6 +26,8 @@
 - `IecReader`: a non-printable character while waiting for the identification drops what was received so far;
   noise after a random `/` no longer keeps the request from being repeated.
 
+- `DateTime::raw`: the 6 bytes of the timestamp as sent (M-Bus type I / CP48).
+
 ### Changed
 
 - `Reader`: a frame counts as repetition only with the same access number **and** an unchanged FCB (when FCV is

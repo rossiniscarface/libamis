@@ -41,6 +41,7 @@ struct DateTime {
   uint8_t week = 0;     // calendar week, 0 = not given
   bool dst = false;     // daylight saving time
   bool valid = false;
+  uint8_t raw[6] = {0};  // the 6 bytes as sent (M-Bus type I / CP48, LSB first)
 
   // Decodes 6 bytes of M-Bus type I. Returns false for implausible values.
   bool decode_type_i(const uint8_t b[6]);
