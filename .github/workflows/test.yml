@@ -1,9 +1,9 @@
 name: test
-# Runs only for pull requests, release tags and on demand (Actions tab -> Run workflow), not on every push,
-# to save Actions minutes while the repository is private.
+# Runs for pushes to main (the README badge shows event=push), pull requests, release tags and on demand.
 on:
   pull_request:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 jobs:

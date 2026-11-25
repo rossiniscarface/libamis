@@ -192,6 +192,8 @@ Measured with a RAM trace on a reader at a real meter; it differs from the manua
   1.6.8 loses characters the same way. With the same data from a simulated meter nothing is lost. It always hits
   the first character of a line, so the cause is most likely in the meter or its optical transmitter.
 - The whole data set (about 12 KB, 379 lines) takes about 7 minutes at 300 baud; no M-Bus data during that time.
+- If a cumulation (end of a billing period) falls into the readout, the historic value numbers of the tariff
+  registers can be inconsistent (manual 5.2.12.3); then the data set should be read again.
 
 - Codes for Z: 0 = 300, 1 = 600, 2 = 1200, 3 = 2400, 4 = 4800, 5 = 9600, 6 = 19200, 9 = 115200.
 - libamis **never** uses programming or manufacturer specific modes (`ACK 0 Z 1/6/7`).

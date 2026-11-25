@@ -33,6 +33,16 @@
 - `Reader`: default inter-byte timeout 500 ms instead of 200 ms (`now_ms` is the processing time, a stalled main
   loop dropped frames). Docs: the `E5` to a data frame belongs into the M-Bus reply window of about 85 ms.
 
+### Docs and build
+
+- README, header and protocol.md: identification takes about 10–15 s at a real meter, the billing data set about
+  7 min; note on inconsistent historic values if a cumulation falls into the readout (manual 5.2.12.3);
+  `DateTime::to_unix_utc()` only applies if `valid`.
+- CMake: `target_compile_features(amis PUBLIC cxx_std_17)` instead of a global standard; the test target is only
+  built when libamis is the top-level project.
+- CI also runs on pushes to `main`.
+- The meter identification from a real trace in docs and tests is replaced by a placeholder.
+
 ### Fixes
 
 - `IecReader`: the total timeout (`set_total_timeout_ms()`, default 120 s) ended a readout with the default

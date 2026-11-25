@@ -82,10 +82,10 @@ More: `online(now_ms)`, `stats()` (frames, acknowledgements, errors), `last_plai
 `amis::IecReader` only reads in mode C and never programs anything. Two variants:
 
 - `Mode::kIdentOnly`: send `/?!`, receive the identification (manufacturer “SAT”, part or serial number), then
-  break. Takes about 1 s.
+  break. Takes about 10–15 s at a real meter (it only answers after it has left the M-Bus session).
 - `Mode::kReadout`: complete billing data set (among others 0.0.0 serial number, tariff registers 1.8.1–1.8.6,
   1.6.0/2.6.0 quarter-hour maximum demand current and previous periods, voltages/currents 32.7/31.7 …,
-  historic values). By default everything runs at 300 baud and takes about 5–6 min. The meter only switches
+  historic values). By default everything runs at 300 baud and takes about 7 min. The meter only switches
   to a faster rate if the acknowledgement repeats the code from its identification (TD-351x: “6” = 19200),
   so `set_max_baud_char('6')` is the only faster option.
 
@@ -95,7 +95,9 @@ first acknowledgement with `ER0007` and sends the data after the repeated one, w
 (`set_ack_tries()`, `set_ack_retry_ms()`). An error telegram that remains (`ERxxxx`, with or without brackets)
 ends the readout with `Error::kMeterError` and `meter_error()`. `set_total_timeout_ms()` (default 120 s) limits
 the time until the data starts; while data arrives, the readout only ends if no character comes for 2 s. A data
-line longer than 95 characters is cut off (`raw_line_truncated()`, `truncated_lines()`), the readout goes on. Details: [docs/protocol.md](docs/protocol.md).
+line longer than 95 characters is cut off (`raw_line_truncated()`, `truncated_lines()`), the readout goes on.
+If a cumulation (end of a billing period) falls into the readout, the historic value numbers of the tariff
+registers can be inconsistent (manual 5.2.12.3): read again in that case. Details: [docs/protocol.md](docs/protocol.md).
 
 ```cpp
 amis::IecReader iec;

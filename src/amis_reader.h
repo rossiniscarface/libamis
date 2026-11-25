@@ -44,7 +44,7 @@ struct DateTime {
 
   // Decodes 6 bytes of M-Bus type I. Returns false for implausible values.
   bool decode_type_i(const uint8_t b[6]);
-  // Seconds since 1970 (UTC), assuming the meter runs on CET/CEST (Austria).
+  // Seconds since 1970 (UTC), assuming the meter runs on CET/CEST (Austria). Only meaningful if valid.
   int64_t to_unix_utc() const;
 };
 

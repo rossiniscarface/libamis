@@ -27,7 +27,7 @@
 
 namespace amis {
 
-// One data line, e.g. 1.8.0(001234.567*kWh) oder 1.6.0(01.234*kW)(2611231445)
+// One data line, e.g. 1.8.0(001234.567*kWh) or 1.6.0(01.234*kW)(2611231445)
 struct IecLine {
   char obis[20];
   char value[32];
@@ -57,7 +57,7 @@ class IecReader {
   // The meter only switches if the acknowledgement repeats exactly the code from its identification
   // (Siemens manual 5.2.1; the TD-351x always reports '6' = 19200). So the code of the meter is used if it is
   // not higher than this value, otherwise everything stays at 300 Bd. Default '0': always 300 Bd (proven,
-  // the billing data set then takes about 5-6 min). With '6' the TD-351x sends the data at 19200 Bd.
+  // the billing data set then takes about 7 min). With '6' the TD-351x sends the data at 19200 Bd.
   void set_max_baud_char(char z) { max_z_ = z; }
   // How often the request is sent if the meter does not answer (default 3). The TD-351x only wakes up its
   // IEC mode with the first received character, so the request usually has to be repeated (manual 5.2.12.2).
