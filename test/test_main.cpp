@@ -159,7 +159,7 @@ static void test_frames() {
   st = feed(r5, kFrame1, sizeof(kFrame1), 1000, &acks);
   CHECK((st & amis::Reader::kReading) && acks == 1);
 
-  // Gap in the middle of a frame (> 200 ms) -> dropped, the next complete frame counts
+  // Gap in the middle of a frame (> 500 ms) -> dropped, the next complete frame counts
   amis::Reader r6;
   r6.set_key_hex(kTestKeyHex);
   acks = 0;
@@ -644,6 +644,21 @@ static void test_iec_030() {
 
 // Changes for 0.3.0 in amis::Reader (review findings A3...)
 static void test_reader_030() {
+  // A5: default inter-byte timeout 500 ms: a 300 ms stall in the middle of a frame is fine, 1 s is a resync
+  {
+    amis::Reader r;
+    r.set_key_hex(kTestKeyHex);
+    int acks = 0;
+    uint8_t st = feed(r, kFrame1, 40, 0, &acks);
+    st |= feed(r, kFrame1 + 40, sizeof(kFrame1) - 40, 340, &acks);
+    CHECK((st & amis::Reader::kReading) && acks == 1 && r.stats().resyncs == 0);
+    amis::Reader r2;
+    r2.set_key_hex(kTestKeyHex);
+    acks = 0;
+    st = feed(r2, kFrame1, 40, 0, &acks);
+    st |= feed(r2, kFrame1 + 40, sizeof(kFrame1) - 40, 1040, &acks);
+    CHECK(!(st & amis::Reader::kReading) && acks == 0 && r2.stats().resyncs == 1);
+  }
   // A3: UART error in the middle of a frame -> frame dropped, no E5, no reading; the next frame is read
   {
     amis::Reader r;

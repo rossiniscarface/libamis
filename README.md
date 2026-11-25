@@ -140,7 +140,8 @@ selection, BCC, break, timeout). CI runs the tests with GCC and Clang and builds
 
 - As M-Bus slave the reading head may **only answer with `E5`** (section 2.3.10). Other information or commands
   from the M-Bus slave to the meter are not allowed and would be discarded.
-- The search request must be acknowledged within **0.5 s**. After **10 missing acknowledgements** the meter falls
+- The search request must be acknowledged within **0.5 s**, a data frame within the M-Bus reply window of about
+  **85 ms** (330 bit times + 50 ms): call `push()` soon after the bytes arrive and send `E5` right away. After **10 missing acknowledgements** the meter falls
   back to search mode (then about 1 min until the next search request).
 - The interface only works with the **terminal cover closed** (symbol “S1” on the display off).
 - Netz OÖ also uses the interface for service; do not glue the reading head to the meter.

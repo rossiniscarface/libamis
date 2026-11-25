@@ -6,7 +6,9 @@
 //   * then it sends one SND_UD long frame per second with AES-128-CBC encrypted data
 //     (OMS security mode 5) -> every valid frame is acknowledged with E5.
 // Per the Netz OOe specification ("AMIS-Zaehler Kundenschnittstelle", 2021-11-05): E5 to the search request
-// within 0.5 s; after 10 missing acknowledgements the meter falls back to search mode. As M-Bus slave the
+// within 0.5 s (2.3.7); for SND_UD the M-Bus reply window applies (EN 13757-2: 11 bit times up to 330 bit times
+// + 50 ms after the frame, about 85 ms at 9600 Bd), so call push() soon after the bytes arrive and send E5
+// right away. After 10 missing acknowledgements the meter falls back to search mode. As M-Bus slave the
 // reading head may ONLY answer with E5 (section 2.3.10). The interface only works with the terminal cover closed.
 //
 // The class does NOT touch hardware. The caller feeds received bytes with push() and gets back what to do
@@ -142,7 +144,9 @@ class Reader {
 
   // M-Bus primary address of the reading head (the AMIS looks for 240 = 0xF0)
   void set_primary_address(uint8_t addr) { address_ = addr; }
-  // A longer gap inside a frame discards the frame (default 200 ms)
+  // A longer gap inside a frame discards the frame (default 500 ms). now_ms is the processing time, not the
+  // receive time: a 101-byte frame takes about 116 ms, the next one follows about 885 ms later, so 500 ms
+  // tolerates a stalled main loop and still separates two frames.
   void set_interbyte_timeout_ms(uint32_t ms) { interbyte_timeout_ms_ = ms; }
 
   // Process one received byte. now_ms = monotonic time in ms (millis(), esp_timer, ...).
@@ -186,7 +190,7 @@ class Reader {
   Aes128 aes_;
   bool has_key_ = false;
   uint8_t address_ = 0xF0;
-  uint32_t interbyte_timeout_ms_ = 200;
+  uint32_t interbyte_timeout_ms_ = 500;
 
   uint8_t buf_[kMaxFrame];
   size_t len_ = 0;

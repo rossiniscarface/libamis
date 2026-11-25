@@ -15,6 +15,11 @@
   progress is dropped (no `E5`). README and header describe the integration rule (check the UART error flag
   before a block goes to `push()`).
 
+### Changed
+
+- `Reader`: default inter-byte timeout 500 ms instead of 200 ms (`now_ms` is the processing time, a stalled main
+  loop dropped frames). Docs: the `E5` to a data frame belongs into the M-Bus reply window of about 85 ms.
+
 ### Fixes
 
 - `IecReader`: the total timeout (`set_total_timeout_ms()`, default 120 s) ended a readout with the default

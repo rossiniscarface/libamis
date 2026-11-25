@@ -21,11 +21,17 @@ meter                                    reading head
   |-- SND_NKE  10 40 F0 30 16 ----------->|   about once a minute (search mode)
   |<---------------------------------- E5 |   within 0.5 s (section 2.3.7)
   |-- SND_UD  68 5F 5F 68 53 F0 5B ... -->|   every second, aligned to the full second
-  |<---------------------------------- E5 |   acknowledge every frame
+  |<---------------------------------- E5 |   acknowledge every frame (M-Bus reply window, about 85 ms)
   |-- SND_UD  68 5F 5F 68 73 F0 5B ... -->|   FCB bit toggles (C = 53 / 73)
   |<---------------------------------- E5 |
   ...  after 10 missing acknowledgements -> back to search mode
 ```
+
+Timing of the acknowledgement: 0.5 s applies to the search request (section 2.3.7). For SND_UD the M-Bus reply
+window applies (EN 13757-2): at the earliest 11 bit times, at the latest 330 bit times + 50 ms after the end of
+the frame, about 85 ms at 9600 Bd. A later `E5` counts as missing and the master repeats the frame. libamis
+drops a frame if more than 500 ms pass between two of its bytes (`set_interbyte_timeout_ms()`); a frame takes
+about 116 ms (11 bits per character), the next one follows about 885 ms later.
 
 **As M-Bus slave the reading head may only send `E5`** (section 2.3.10). According to Netz OÖ other information
 or commands from the M-Bus slave are not allowed and are discarded by the M-Bus master. The reading head must also cope with gaps in the one-second rhythm
