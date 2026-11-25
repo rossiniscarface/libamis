@@ -52,8 +52,11 @@ waiting in the receive buffer.
 sum alone misses two bit errors that cancel out, and such a frame would be acknowledged. So read the UART in
 blocks, check its error flag **before** a block goes to `push()`, and on a parity, framing or overrun error drop
 the block and call `reader.push_error(millis())` instead (no `E5` for that frame, counted in
-`stats().line_errors`). ESP8266 Arduino: `Serial.hasRxError()` / `Serial.hasOverrun()`; ESP-IDF: the events
-`UART_PARITY_ERR`, `UART_FRAME_ERR` and `UART_FIFO_OVF`; Arduino-ESP32: `Serial.onReceiveError()`.
+`stats().line_errors`). ESP-IDF: the events `UART_PARITY_ERR`, `UART_FRAME_ERR` and `UART_FIFO_OVF`;
+Arduino-ESP32: `Serial.onReceiveError()`. **Not** on the ESP8266 Arduino core: there `Serial.hasRxError()` is
+also set by the RX timeout interrupt (`UITO` in `cores/esp8266/uart.cpp`), i.e. after nearly every received
+block, so it cannot tell a parity error from normal data (tested at a real meter: it discarded valid data). Only
+`Serial.hasOverrun()` is usable there.
 
 | Field in `Reading` | OBIS | Unit |
 |---|---|---|

@@ -15,7 +15,8 @@
 
 - `Reader::push_error()` and `Stats::line_errors`: report a UART parity, framing or overrun error, the frame in
   progress is dropped (no `E5`). README and header describe the integration rule (check the UART error flag
-  before a block goes to `push()`).
+  before a block goes to `push()`). Not usable with `Serial.hasRxError()` on the ESP8266 Arduino core, which
+  also reports the RX timeout.
 - `Reader::set_required_fields()` and `Error::kIncomplete`: a frame without a required value is reported as an
   error instead of a reading with zeros (default: no requirement). `Reading::kAll` names all 10 fields.
 - `IecReader::raw_line_truncated()` and `truncated_lines()`: a data line longer than 95 characters no longer ends

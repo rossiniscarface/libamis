@@ -166,8 +166,10 @@ class Reader {
   // M-Bus (EN 13757-2, format FT 1.2) relies on the even parity of every character together with the checksum:
   // the 8-bit sum alone misses two bit errors that cancel out. So read the UART in blocks, check its error
   // flag BEFORE the block goes to push(), and on an error drop the block and call push_error() instead.
-  // ESP8266 Arduino: Serial.hasRxError() / Serial.hasOverrun(); ESP-IDF: events UART_PARITY_ERR,
-  // UART_FRAME_ERR, UART_FIFO_OVF; Arduino-ESP32: HardwareSerial::onReceiveError().
+  // ESP-IDF: events UART_PARITY_ERR, UART_FRAME_ERR, UART_FIFO_OVF; Arduino-ESP32:
+  // HardwareSerial::onReceiveError(). NOT on the ESP8266 Arduino core: Serial.hasRxError() is also set by the
+  // RX timeout interrupt (UITO), i.e. after nearly every received block, so it cannot report parity errors;
+  // only Serial.hasOverrun() is usable there.
   void push_error(uint32_t now_ms);
 
   const Reading &reading() const { return reading_; }
