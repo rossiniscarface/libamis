@@ -602,6 +602,32 @@ static void iec_start_readout(amis::IecReader &r, uint32_t *t) {
 
 // Changes for 0.3.0 (review findings A1...)
 static void test_iec_030() {
+  // A9: "/" followed by noise once a second: the request is still repeated after 5 s
+  {
+    amis::IecReader r;
+    uint32_t t = 0;
+    r.begin(amis::IecReader::Mode::kReadout, t);
+    CHECK(r.poll(t) == amis::IecReader::kSend);
+    r.push('/', 100);
+    uint8_t all = 0;
+    for (t = 1000; t <= 5500; t += 500) {
+      if (t % 1000 == 0) r.push(0x05, t);  // not printable
+      all |= r.poll(t);
+    }
+    CHECK(all == amis::IecReader::kSend);
+    // printable characters after "/" still count as an arriving identification
+    amis::IecReader r2;
+    t = 0;
+    r2.begin(amis::IecReader::Mode::kReadout, t);
+    r2.poll(t);
+    all = 0;
+    r2.push('/', 4000);
+    for (t = 4500; t <= 7000; t += 500) {
+      r2.push('S', t);
+      all |= r2.poll(t);
+    }
+    CHECK(all == 0);
+  }
   // A8: a data line of 200 characters is truncated and counted, the readout goes on
   {
     amis::IecReader r;

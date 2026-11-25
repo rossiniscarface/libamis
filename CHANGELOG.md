@@ -21,6 +21,9 @@
 - `IecReader::raw_line_truncated()` and `truncated_lines()`: a data line longer than 95 characters no longer ends
   the readout with `Error::kFormat`; it is cut off, reported as raw line only, counted, and the readout goes on.
 
+- `IecReader`: a non-printable character while waiting for the identification drops what was received so far;
+  noise after a random `/` no longer keeps the request from being repeated.
+
 ### Changed
 
 - `Reader`: default inter-byte timeout 500 ms instead of 200 ms (`now_ms` is the processing time, a stalled main

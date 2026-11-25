@@ -257,7 +257,13 @@ uint8_t IecReader::push(uint8_t byte, uint32_t now_ms) {
           // valid: "/" + 3 letters + baud rate code (an echo of "/?!" is filtered out here)
           if (len_ >= 5 && is_letter(buf_[1]) && is_letter(buf_[2]) && is_letter(buf_[3])) return finish_ident_(now_ms);
           len_ = 0;
-        } else if (c != '\r') {
+        } else if (c == '\r') {
+          // end of the identification follows with LF
+        } else if (c < 0x20 || c == 0x7F) {
+          // not printable: noise (e.g. M-Bus frames at 9600 Bd seen at 300 Bd), no identification. Dropping it
+          // also lets poll() repeat the request instead of waiting for an identification that is not coming.
+          len_ = 0;
+        } else {
           if (len_ < sizeof(buf_) - 1)
             buf_[len_++] = c;
           else
