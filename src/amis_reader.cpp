@@ -101,6 +101,7 @@ const char kErr6[] AMIS_PROGMEM = "wrong key";
 const char kErr7[] AMIS_PROGMEM = "unparseable data records";
 const char kErr8[] AMIS_PROGMEM = "no known values";
 const char kErr9[] AMIS_PROGMEM = "required values missing";
+const char kErr10[] AMIS_PROGMEM = "frame not encrypted";
 const char kErrUnknown[] AMIS_PROGMEM = "?";
 }  // namespace
 
@@ -116,6 +117,7 @@ const char *error_str(Error e) {
     case Error::kRecordFormat: return detail::pgm_str(kErr7);
     case Error::kNoData: return detail::pgm_str(kErr8);
     case Error::kIncomplete: return detail::pgm_str(kErr9);
+    case Error::kNotEncrypted: return detail::pgm_str(kErr10);
   }
   return detail::pgm_str(kErrUnknown);
 }
@@ -265,7 +267,7 @@ uint8_t Reader::handle_long_() {
 }
 
 // Application layer starting at CI. Supported: CI 0x5B / 0x72 with long header (12 bytes),
-// security mode 0 (plain) and 5 (AES-128-CBC, IV from address and access number).
+// security mode 0 (plain, only without a key) and 5 (AES-128-CBC, IV from address and access number).
 uint8_t Reader::decode_application_(uint8_t *app, size_t len) {
   if (len < 1) return fail_(Error::kFrameFormat);
   const uint8_t ci = app[0];
@@ -303,7 +305,9 @@ uint8_t Reader::decode_application_(uint8_t *app, size_t len) {
     memset(iv + 8, acc, 8);
     aes_.cbc_decrypt(data, enc, iv);
     if (data[0] != 0x2F || data[1] != 0x2F) return fail_(Error::kWrongKey);
-  } else if (mode != 0) {
+  } else if (mode == 0) {
+    if (has_key_) return fail_(Error::kNotEncrypted);  // the AMIS always encrypts: a plain frame is not from it
+  } else {
     return fail_(Error::kUnsupportedEncryption);
   }
 

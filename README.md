@@ -48,6 +48,9 @@ if (st & amis::Reader::kError) log(amis::error_str(reader.last_error()));
 Feed the bytes **one at a time**. That way exactly one acknowledgement goes out per frame, even if two frames are
 waiting in the receive buffer.
 
+**Only encrypted frames:** with a key set, an unencrypted frame (security mode 0) is rejected with
+`Error::kNotEncrypted`; the AMIS always encrypts, so such a frame does not come from the meter.
+
 **UART errors:** M-Bus relies on the even parity of every character together with the frame checksum; the 8-bit
 sum alone misses two bit errors that cancel out, and such a frame would be acknowledged. So read the UART in
 blocks, check its error flag **before** a block goes to `push()`, and on a parity, framing or overrun error drop

@@ -174,7 +174,7 @@ class IecReader {
 };
 
 // Short English text for an error. On the ESP8266 the texts live in flash and are copied into one shared
-// buffer, so the result is only valid until the next error_str() call.
+// buffer, so the result is only valid until the next error_str() call (not thread-safe there).
 const char *error_str(IecReader::Error e);
 
 }  // namespace amis

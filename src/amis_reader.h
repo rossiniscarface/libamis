@@ -105,9 +105,10 @@ enum class Error : uint8_t {
   kRecordFormat,            // data records not parseable
   kNoData,                  // frame without any known value
   kIncomplete,              // a value required with set_required_fields() is missing
+  kNotEncrypted,            // unencrypted frame (security mode 0) although a key is set
 };
 // Short English text for an error. On the ESP8266 the texts live in flash and are copied into one shared
-// buffer, so the result is only valid until the next error_str() call.
+// buffer, so the result is only valid until the next error_str() call (not thread-safe there).
 const char *error_str(Error e);
 
 struct Stats {
@@ -140,7 +141,11 @@ class Reader {
 
   Reader();
 
-  // Key from the Netz OOe customer portal, 32 hex digits (spaces, colons, dashes allowed)
+  // Key from the Netz OOe customer portal, 32 hex digits (spaces, colons, dashes allowed). With a key set, only
+  // encrypted frames (security mode 5) are accepted; an unencrypted one gives Error::kNotEncrypted, so nobody
+  // with access to the optical port can feed in made-up values without the key. Without a key, unencrypted
+  // frames are read (for tests and plain M-Bus sources).
+  // The key stays in RAM as long as the Reader lives (as AES round keys); libamis does not wipe it.
   bool set_key_hex(const char *hex);
   void set_key(const uint8_t key[16]);
   bool has_key() const { return has_key_; }

@@ -751,6 +751,24 @@ static void frame_encrypt(uint8_t *f, const uint8_t plain[80]) {
 
 // Changes for 0.3.0 in amis::Reader (review findings A3...)
 static void test_reader_030() {
+  // Unencrypted frame (security mode 0): rejected with a key set, read without a key
+  {
+    uint8_t f[101] = {0x68, 0x5F, 0x5F, 0x68, 0x53, 0xF0, 0x5B, 0, 0, 0, 0, 0x2D, 0x4C, 0x01, 0x0E, 0x01, 0x00, 0x00, 0x00};
+    memset(f + 19, 0x2F, 80);
+    const uint8_t rec[] = {0x04, 0x03, 0x40, 0x42, 0x0F, 0x00};  // 1.8.0 = 1000000 Wh
+    memcpy(f + 19, rec, sizeof(rec));
+    f[100] = 0x16;
+    frame_fix_checksum(f);
+    amis::Reader r;
+    r.set_key_hex(kTestKeyHex);
+    int acks = 0;
+    uint8_t st = feed(r, f, sizeof(f), 0, &acks);
+    CHECK(st == (amis::Reader::kSendAck | amis::Reader::kError) && acks == 1);
+    CHECK(r.last_error() == amis::Error::kNotEncrypted && r.reading().energy_import_wh == 0);
+    amis::Reader r2;  // no key
+    st = feed(r2, f, sizeof(f), 0, &acks);
+    CHECK((st & amis::Reader::kReading) && r2.reading().energy_import_wh == 1000000);
+  }
   // A11: repetition = same access number AND unchanged FCB; SND_NKE to 0xFF resets it without E5
   {
     amis::Reader r;

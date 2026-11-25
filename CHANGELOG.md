@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1 – unreleased
+
+### Security
+
+- `Reader`: with a key set, an unencrypted frame (security mode 0) is rejected with the new
+  `Error::kNotEncrypted`. Before, anyone with access to the optical port could feed in made-up values without
+  the key. Without a key, unencrypted frames are still read.
+
 ## 0.3.0 – 2026-11-25
 
 ### Breaking changes

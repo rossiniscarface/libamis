@@ -77,6 +77,9 @@ blocks (**5**).
   Example from the specification: `2D 4C 00 00 00 00 01 0E 0D 0D 0D 0D 0D 0D 0D 0D`.
 - The plaintext starts and ends with the filler bytes `2F 2F`. If `2F 2F` is missing at the start, the key is
   wrong.
+- With a key set, libamis only accepts security mode 5; an unencrypted frame (mode 0) is reported as
+  `Error::kNotEncrypted`. Otherwise anyone with access to the optical port could feed in made-up values without
+  knowing the key.
 
 ## 5. Data records (section 2.4.2.8, table 2)
 
