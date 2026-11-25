@@ -55,17 +55,10 @@ const char *error_str(IecReader::Error e) {
 }
 
 uint32_t IecReader::baud_for_char(char z) {
-  switch (z) {
-    case '0': return 300;
-    case '1': return 600;
-    case '2': return 1200;
-    case '3': return 2400;
-    case '4': return 4800;
-    case '5': return 9600;
-    case '6': return 19200;
-    case '9': return 115200;
-    default: return 0;
-  }
+  // '0'..'6' = 300 Bd doubled per step; computed, because a switch becomes a lookup table that the ESP8266 keeps
+  // in RAM
+  if (z >= '0' && z <= '6') return 300u << (z - '0');
+  return (z == '9') ? 115200u : 0u;
 }
 
 bool IecReader::set_address(const char *addr) {

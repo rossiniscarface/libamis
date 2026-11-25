@@ -605,6 +605,13 @@ static void iec_start_readout(amis::IecReader &r, uint32_t *t) {
 
 // Changes for 0.3.0 (review findings A1...)
 static void test_iec_030() {
+  // Baud rate codes (computed since 0.3.1, no table in RAM)
+  {
+    const uint32_t exp[10] = {300, 600, 1200, 2400, 4800, 9600, 19200, 0, 0, 115200};
+    bool ok = true;
+    for (int i = 0; i < 10; i++) ok = ok && amis::IecReader::baud_for_char(static_cast<char>('0' + i)) == exp[i];
+    CHECK(ok && amis::IecReader::baud_for_char('A') == 0 && amis::IecReader::baud_for_char('/') == 0);
+  }
   // A10: set_address() checks the characters (digits, letters, space) and the length (32)
   {
     amis::IecReader r;

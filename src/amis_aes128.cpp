@@ -49,8 +49,6 @@ const uint8_t kInvSbox[256] AMIS_PROGMEM = {
     0x17, 0x2b, 0x04, 0x7e, 0xba, 0x77, 0xd6, 0x26, 0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d,
 };
 
-const uint8_t kRcon[10] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36};
-
 inline uint8_t sbox(uint8_t x) { return AMIS_RD(&kSbox[x]); }
 inline uint8_t inv_sbox(uint8_t x) { return AMIS_RD(&kInvSbox[x]); }
 inline uint8_t xtime(uint8_t x) { return static_cast<uint8_t>((x << 1) ^ ((x & 0x80) ? 0x1b : 0x00)); }
@@ -119,12 +117,14 @@ void inv_mix_columns(uint8_t *s) {
 
 void Aes128::set_key(const uint8_t key[kKeySize]) {
   memcpy(round_keys_, key, 16);
+  uint8_t rcon = 0x01;  // round constant, doubled in GF(2^8) per word group (no table: on the ESP8266 it would be RAM)
   for (int i = 4; i < 44; i++) {
     uint8_t t[4];
     memcpy(t, &round_keys_[4 * (i - 1)], 4);
     if ((i & 3) == 0) {  // RotWord, SubWord, Rcon
       const uint8_t t0 = t[0];
-      t[0] = static_cast<uint8_t>(sbox(t[1]) ^ kRcon[i / 4 - 1]);
+      t[0] = static_cast<uint8_t>(sbox(t[1]) ^ rcon);
+      rcon = xtime(rcon);
       t[1] = sbox(t[2]);
       t[2] = sbox(t[3]);
       t[3] = sbox(t0);
