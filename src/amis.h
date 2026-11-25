@@ -2,7 +2,7 @@
 // libamis - portable reader core for the Siemens AMIS smart meter (Netz Oberoesterreich).
 #pragma once
 
-#define LIBAMIS_VERSION "0.2.2"
+#define LIBAMIS_VERSION "0.2.3"
 
 #include "amis_aes128.h"
 #include "amis_reader.h"

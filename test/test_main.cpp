@@ -466,6 +466,105 @@ static void test_iec() {
     CHECK(r10.poll(t + 21300) == amis::IecReader::kFailed && r10.error() == amis::IecReader::Error::kTimeout);
   }
 
+  // Repeated acknowledgement after a switch to a faster baud rate: back to 300 Bd first, then ACK 0 0 0
+  {
+    amis::IecReader r12;
+    t = 0;
+    r12.set_max_baud_char('6');
+    r12.begin(amis::IecReader::Mode::kReadout, t);
+    iec_feed(r12, "/SAT6X\r\n", &t);
+    t += 800;
+    CHECK(r12.poll(t) == (amis::IecReader::kSend | amis::IecReader::kSetSerial) && r12.baud() == 19200);
+    const uint32_t t_ack = t;
+    CHECK(r12.poll(t_ack + 7100) == amis::IecReader::kSetSerial && r12.baud() == 300);  // no data: UART to 300
+    CHECK(r12.poll(t_ack + 7101) == amis::IecReader::kSend);                            // then send, no switch
+    tx = r12.tx(&n);
+    CHECK(n == 6 && memcmp(tx, "\x06" "000\r\n", 6) == 0);
+    t = t_ack + 7200;
+    r12.push(0x02, t++);
+    iec_feed(r12, "0.0.0(7)\r\n\x03", &t);
+    CHECK(r12.push(static_cast<uint8_t>('0' ^ '.' ^ '0' ^ '.' ^ '0' ^ '(' ^ '7' ^ ')' ^ '\r' ^ '\n' ^ 0x03), t++) ==
+          amis::IecReader::kDone);
+  }
+  // ... and the same after an error telegram (the meter answers a refused acknowledgement at 300 Bd)
+  {
+    amis::IecReader r13;
+    t = 0;
+    r13.set_max_baud_char('6');
+    r13.begin(amis::IecReader::Mode::kReadout, t);
+    iec_feed(r13, "/SAT6X\r\n", &t);
+    t += 800;
+    CHECK(r13.poll(t) == (amis::IecReader::kSend | amis::IecReader::kSetSerial));
+    const uint32_t t_ack = t;
+    r13.push(0x02, t++);
+    iec_feed(r13, "ER0007\x03\x13", &t);
+    CHECK(r13.poll(t_ack + 7100) == amis::IecReader::kSetSerial && r13.baud() == 300);
+    CHECK(r13.poll(t_ack + 7101) == amis::IecReader::kSend && r13.tx(&n)[2] == '0');
+  }
+
+  // Echo of our acknowledgement and STX-less data before a repeated acknowledgement are no data
+  {
+    amis::IecReader r14;
+    t = 0;
+    r14.begin(amis::IecReader::Mode::kReadout, t);
+    iec_feed(r14, "/SAT6X\r\n", &t);
+    t += 800;
+    CHECK(r14.poll(t) == amis::IecReader::kSend);
+    const uint32_t t_ack = t;
+    CHECK(iec_feed(r14, "\x06" "000\r\n", &t) == 0);  // echo
+    CHECK(iec_feed(r14, "1.8.0(1)\r\n", &t) == 0);     // no STX after the first acknowledgement
+    CHECK(r14.poll(t_ack + 7100) == amis::IecReader::kSend);
+    t = t_ack + 7200;
+    CHECK(iec_feed(r14, "\x06" "000\r\n", &t) == 0);  // echo of the repeated one
+    CHECK(iec_feed(r14, "F.F(00)\r\n", &t) & amis::IecReader::kRawLine);
+    CHECK(!strcmp(r14.raw_line(), "F.F(00)"));
+  }
+
+  // An error telegram ended by CR LF and followed by data: the data lines count, the error is dropped
+  {
+    amis::IecReader r15;
+    t = 0;
+    r15.begin(amis::IecReader::Mode::kReadout, t);
+    iec_feed(r15, "/SAT6X\r\n", &t);
+    t += 800;
+    r15.poll(t);
+    r15.push(0x02, t++);
+    CHECK((iec_feed(r15, "ER0007\r\n", &t) & amis::IecReader::kRawLine) == 0);
+    int raw = 0;
+    for (const char *p = "F.F(00)\r\n0.0.0(9)\r\n"; *p; p++)
+      if (r15.push(static_cast<uint8_t>(*p), t++) & amis::IecReader::kRawLine) raw++;
+    CHECK(raw == 2 && r15.meter_error()[0] == 0);
+    r15.push(0x03, t++);
+    CHECK(r15.poll(t + 2100) == amis::IecReader::kDone);
+  }
+
+  // The request is not repeated while an identification is arriving
+  {
+    amis::IecReader r16;
+    r16.begin(amis::IecReader::Mode::kIdentOnly, 0);
+    CHECK(r16.poll(0) == amis::IecReader::kSend);
+    t = 4990;
+    iec_feed(r16, "/SAT6", &t);
+    CHECK(r16.poll(5100) == 0);
+    t = 5200;
+    iec_feed(r16, "ABC\r\n", &t);
+    CHECK(!strcmp(r16.identification(), "ABC"));
+  }
+
+  // Short acknowledgement interval: still wait at least 2.5 s for data after the last acknowledgement
+  {
+    amis::IecReader r17;
+    t = 0;
+    r17.set_ack_tries(1);
+    r17.set_ack_retry_ms(300);
+    r17.begin(amis::IecReader::Mode::kReadout, t);
+    iec_feed(r17, "/SAT6X\r\n", &t);
+    t += 800;
+    CHECK(r17.poll(t) == amis::IecReader::kSend);
+    CHECK(r17.poll(t + 400) == 0 && r17.active());
+    CHECK(r17.poll(t + 2600) == amis::IecReader::kFailed && r17.error() == amis::IecReader::Error::kTimeout);
+  }
+
   // Block check character missing (allowed, manual 5.2.8): done after the character timeout
   amis::IecReader r7;
   t = 0;

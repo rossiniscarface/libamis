@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.3 – 2026-11-25
+
+Fixes in `IecReader` from a code review:
+
+- A repeated acknowledgement after a switch to a faster baud rate (`set_max_baud_char('6')`) was sent at the new
+  baud rate, which the meter does not understand. Now the UART is switched back to 300 Bd first (`kSetSerial`
+  alone), and the acknowledgement is repeated for 300 Bd (`ACK 0 0 0`).
+- Data without STX is only taken after a repeated acknowledgement (as the real TD-3511 sends it) or without
+  acknowledgement; an optical echo of our own acknowledgement is ignored.
+- An error telegram ended by CR LF no longer hides the data lines after it; if data follows, the error is dropped.
+- The request is not repeated (and the reader does not give up) while an identification is arriving.
+- After the last acknowledgement the reader waits at least 2.5 s for data, even with a short `set_ack_retry_ms()`.
+
 ## 0.2.2 – 2026-11-24
 
 `IecReader` adapted to a real TD-3511 (behaviour captured with a RAM trace, see docs/protocol.md):

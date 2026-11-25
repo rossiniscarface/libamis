@@ -173,9 +173,13 @@ Measured with a RAM trace on a reader at a real meter; it differs from the manua
   ESP8266 firmware works the same way without noticing: it ignores everything but `F.F(` and repeats the
   acknowledgement after 7 s.
 - Without STX there is no defined start for the block check character, so libamis does not check it then.
-- In some readouts at that meter a single character at the start of a line was missing (1–2 per 12 KB). With the
-  same data from a simulated meter nothing was lost, so this looks like a transmission problem on the optical
-  link, but it is not proven.
+  libamis only takes data without STX after a repeated acknowledgement (or in the mode without acknowledgement),
+  and it ignores an optical echo of its own acknowledgement.
+- In most readouts at that meter the first character of one to four lines was missing (per 12 KB, e.g.
+  `.60.4.2(…)` instead of `C.60.4.2(…)`). It never reached the UART: no parity, framing or overrun error at the
+  ESP8266, no software buffer lost, independent of when the file is written to flash, and the original firmware
+  1.6.8 loses characters the same way. With the same data from a simulated meter nothing is lost. It always hits
+  the first character of a line, so the cause is most likely in the meter or its optical transmitter.
 - The whole data set (about 12 KB, 379 lines) takes about 7 minutes at 300 baud; no M-Bus data during that time.
 
 - Codes for Z: 0 = 300, 1 = 600, 2 = 1200, 3 = 2400, 4 = 4800, 5 = 9600, 6 = 19200, 9 = 115200.

@@ -68,7 +68,9 @@ class IecReader {
   // 200..1500 ms, a real TD-351x answered ER0007 to an acknowledgement after 300 ms).
   void set_reply_delay_ms(uint32_t ms) { reply_delay_ms_ = ms; }
   // How often the acknowledgement is sent if the meter answers it with an error telegram or sends no data
-  // (default 3), and the time between two acknowledgements (default 7000 ms, like the original firmware)
+  // (default 3), and the time between two acknowledgements (default 7000 ms, like the original firmware).
+  // After a switch to a faster baud rate a repetition first returns kSetSerial alone (back to 300 Bd) and is then
+  // sent as ACK 0 0 0 at 300 Bd.
   void set_ack_tries(uint8_t n) { ack_tries_ = n ? n : 1; }
   void set_ack_retry_ms(uint32_t ms) { ack_retry_ms_ = ms; }
   // Readout without acknowledgement (manual fig. 5-1): after the identification nothing is sent, the meter sends
@@ -117,6 +119,7 @@ class IecReader {
   uint8_t handle_data_line_();
   uint8_t end_of_data_();
   uint8_t data_line_();
+  uint8_t ack_due_(uint32_t now_ms);
   void set_tx_(const char *s);
 
   State state_ = State::kIdle;
@@ -131,7 +134,10 @@ class IecReader {
   uint32_t ack_ms_ = 0;
   uint32_t wait_ms_ = 0;
   bool send_ack_ = true;
-  bool no_stx_ = false;  // data block started without STX (no block check)
+  bool no_stx_ = false;     // data block started without STX (no block check)
+  bool uart_fast_ = false;  // the caller's UART is at a data baud rate above 300 Bd
+  bool skip_echo_ = false;  // ignoring an echo of our acknowledgement up to LF
+  bool err_line_ = false;   // the last line was an error telegram
   uint8_t acks_sent_ = 0;
   uint8_t requests_sent_ = 0;
   char meter_error_[9] = {0};
