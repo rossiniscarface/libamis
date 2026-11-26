@@ -23,7 +23,7 @@ def payload(t, a_plus, a_minus, r_plus, r_minus, p_plus, p_minus, q_plus, q_minu
     assert len(p) == 80
     return p
 
-def frame(plain, acc, key=KEY, c=0x53, ident=b"\x78\x56\x34\x12", man=b"\x2d\x4c", ver=1, med=0x0e):
+def frame(plain, acc, key=KEY, c=0x53, ident=b"\x00\x00\x00\x00", man=b"\x2d\x4c", ver=1, med=0x0e):
     iv = man + ident + bytes([ver, med]) + bytes([acc]) * 8
     enc = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
     data = enc.update(plain) + enc.finalize()

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // libFuzzer target for amis::Reader:  make -C test fuzz
-// Input byte 0 selects options, the rest is the received byte stream. 0xA5 also advances the clock by 600 ms
+// Input byte 0 selects options (key, required fields, header and replay check, primary address, inter-byte
+// timeout), the rest is the received byte stream. 0xA5 also advances the clock by 600 ms
 // (inter-byte timeout), 0x5A also reports a UART error before the byte.
 #include <stddef.h>
 #include <stdint.h>
@@ -12,13 +13,22 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *d, size_t n) {
   amis::Reader r;
   if (!(d[0] & 2)) r.set_key_hex("00112233445566778899AABBCCDDEEFF");
   if (d[0] & 1) r.set_required_fields(amis::Reading::kAll);
+  if (d[0] & 4) r.set_header_check(false);
+  if (d[0] & 8) r.set_replay_check(false);
+  if (d[0] & 16) r.set_primary_address(0x01);
+  if (d[0] & 32) r.set_interbyte_timeout_ms(d[0] & 0xC0);
   uint32_t t = 0;
   volatile uint32_t sink = 0;
   for (size_t i = 1; i < n; i++) {
     t += (d[i] == 0xA5) ? 600 : 1;
     if (d[i] == 0x5A) r.push_error(t);
     const uint8_t st = r.push(d[i], t);
-    if (st & amis::Reader::kReading) sink = sink + r.reading().energy_import_wh + r.reading().time.raw[5];
+    if (st & amis::Reader::kReading) {
+      const amis::Reading &x = r.reading();
+      sink = sink + x.energy_import_wh + x.time.raw[5] + static_cast<uint32_t>(x.power_balance_w());
+      if (x.time.valid) sink = sink + static_cast<uint32_t>(x.time.to_unix_utc());
+    }
+    sink = sink + (r.online(t) ? 1u : 0u);
     size_t pn = 0;
     const uint8_t *p = r.last_plaintext(&pn);
     for (size_t k = 0; k < pn; k++) sink = sink + p[k];  // must stay inside the frame buffer

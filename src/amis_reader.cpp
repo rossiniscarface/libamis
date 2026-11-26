@@ -50,6 +50,35 @@ const RecordKey kRecords[] AMIS_PROGMEM = {
     {4, {0x04, 0x83, 0xFF, 0x04}, Reading::kInkasso},                       // 1.128.0
 };
 
+// Record layout of the decrypted AMIS payload (Netz OOe table 2, 80 bytes): {offset, length, bytes...}, ends
+// with 0xFF. Every AES block holds fixed bytes, so a changed ciphertext block cannot go unnoticed.
+const uint8_t kAmisLayout[] AMIS_PROGMEM = {
+    0,  4, 0x2F, 0x2F, 0x06, 0x6D,                // filler, time
+    10, 2, 0x04, 0x03,                            // 1.8.0
+    16, 3, 0x04, 0x83, 0x3C,                      // 2.8.0
+    23, 5, 0x84, 0x10, 0xFB, 0x82, 0x73,          // 3.8.1
+    32, 6, 0x84, 0x10, 0xFB, 0x82, 0xF3, 0x3C,    // 4.8.1
+    42, 2, 0x04, 0x2B,                            // 1.7.0
+    48, 3, 0x04, 0xAB, 0x3C,                      // 2.7.0
+    55, 3, 0x04, 0xFB, 0x14,                      // 3.7.0
+    62, 4, 0x04, 0xFB, 0x94, 0x3C,                // 4.7.0
+    70, 4, 0x04, 0x83, 0xFF, 0x04,                // 1.128.0
+    78, 2, 0x2F, 0x2F,                            // filler
+    0xFF};
+constexpr size_t kAmisPayload = 80;
+
+bool amis_layout(const uint8_t *p, size_t len) {
+  if (len != kAmisPayload) return false;
+  for (size_t i = 0;;) {
+    const uint8_t off = AMIS_RD(&kAmisLayout[i]);
+    if (off == 0xFF) return true;
+    const uint8_t n = AMIS_RD(&kAmisLayout[i + 1]);
+    for (uint8_t k = 0; k < n; k++)
+      if (p[off + k] != AMIS_RD(&kAmisLayout[i + 2 + k])) return false;
+    i += 2u + n;
+  }
+}
+
 // Data length by DIF (lower 4 bits); 0xFF = variable, 0xFE = special function
 const uint8_t kDataLen[16] AMIS_PROGMEM = {0, 1, 2, 3, 4, 4, 6, 8, 0, 1, 2, 3, 4, 0xFF, 6, 0xFE};
 
@@ -70,6 +99,11 @@ int64_t days_from_civil(int y, unsigned m, unsigned d) {
   return static_cast<int64_t>(era) * 146097 + static_cast<int64_t>(doe) - 719468;
 }
 
+uint8_t days_in_month(unsigned y, unsigned m) {
+  if (m == 2) return ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0) ? 29 : 28;
+  return (m == 4 || m == 6 || m == 9 || m == 11) ? 30 : 31;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------------------------------------
@@ -86,13 +120,14 @@ bool DateTime::decode_type_i(const uint8_t b[6]) {
   month = b[4] & 0x0F;
   year = static_cast<uint16_t>(2000 + (((b[4] & 0xF0) >> 1) | ((b[3] & 0xE0) >> 5)));
   week = b[5] & 0x3F;
-  valid = !invalid_flag && month >= 1 && month <= 12 && day >= 1 && day <= 31 && hour < 24 && minute < 60 &&
-          second < 60;
+  valid = !invalid_flag && month >= 1 && month <= 12 && day >= 1 && day <= days_in_month(year, month) &&
+          hour < 24 && minute < 60 && second < 60;
   return valid;
 }
 
 int64_t DateTime::to_unix_utc() const {
-  const int64_t local = days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second;
+  const int64_t local = days_from_civil(year, month, day) * 86400 + static_cast<int64_t>(hour) * 3600 +
+                        static_cast<int64_t>(minute) * 60 + second;
   return local - 3600 * (dst ? 2 : 1);  // CET = UTC+1, CEST = UTC+2
 }
 
@@ -109,6 +144,8 @@ const char kErr7[] AMIS_PROGMEM = "unparseable data records";
 const char kErr8[] AMIS_PROGMEM = "no known values";
 const char kErr9[] AMIS_PROGMEM = "required values missing";
 const char kErr10[] AMIS_PROGMEM = "frame not encrypted";
+const char kErr11[] AMIS_PROGMEM = "header or layout not from an AMIS";
+const char kErr12[] AMIS_PROGMEM = "meter time not newer (replay)";
 const char kErrUnknown[] AMIS_PROGMEM = "?";
 }  // namespace
 
@@ -125,6 +162,8 @@ const char *error_str(Error e) {
     case Error::kNoData: return detail::pgm_str(kErr8);
     case Error::kIncomplete: return detail::pgm_str(kErr9);
     case Error::kNotEncrypted: return detail::pgm_str(kErr10);
+    case Error::kHeader: return detail::pgm_str(kErr11);
+    case Error::kReplay: return detail::pgm_str(kErr12);
   }
   return detail::pgm_str(kErrUnknown);
 }
@@ -142,6 +181,7 @@ void Reader::set_key(const uint8_t key[16]) {
   aes_.set_key(key);
   has_key_ = true;
   have_access_ = false;
+  have_time_ = false;
 }
 
 bool Reader::set_key_hex(const char *hex) {
@@ -169,6 +209,9 @@ bool Reader::online(uint32_t now_ms, uint32_t max_age_ms) const {
 
 uint8_t Reader::push(uint8_t byte, uint32_t now_ms) {
   AMIS_COUNT(bytes);
+  // After about 24 days without a reading, forget it: else the 32-bit age wraps after 49.7 days and online()
+  // would report the old reading as fresh again
+  if (have_reading_ && static_cast<uint32_t>(now_ms - last_reading_ms_) > 0x80000000u) have_reading_ = false;
   if (len_ > 0 && static_cast<uint32_t>(now_ms - last_byte_ms_) > interbyte_timeout_ms_) {
     AMIS_COUNT(resyncs);
     reset();
@@ -195,6 +238,12 @@ uint8_t Reader::feed_(uint8_t b) {
     } else {
       return kNothing;
     }
+  }
+  if (len_ >= kMaxFrame || (len_ >= 4 && expected_ == 0)) {
+    // cannot happen in one task; guards the buffer if reset() ran concurrently (see the class comment)
+    AMIS_COUNT(resyncs);
+    reset();
+    return kNothing;
   }
   buf_[len_++] = b;
 
@@ -297,12 +346,14 @@ uint8_t Reader::decode_application_(uint8_t *app, size_t len) {
   }
 
   const uint8_t mode = (cfg >> 8) & 0x1F;
-  plain_off_ = static_cast<size_t>(data - buf_);
-  plain_len_ = dlen;
+  size_t plen = dlen;  // bytes that are parsed
   if (mode == 5) {
     if (!has_key_) return fail_(Error::kNoKey);
     const size_t enc = static_cast<size_t>((cfg >> 4) & 0x0F) * Aes128::kBlockSize;
     if (enc == 0 || enc > dlen) return fail_(Error::kFrameFormat);
+    // Header bytes form the IV: unchecked, they would let someone without the key change the decrypted data
+    if (header_check_ && (le32(id) != 0 || man[0] != 0x2D || man[1] != 0x4C || ver != 0x01 || med != 0x0E))
+      return fail_(Error::kHeader);
     uint8_t iv[16];
     iv[0] = man[0];
     iv[1] = man[1];
@@ -312,11 +363,17 @@ uint8_t Reader::decode_application_(uint8_t *app, size_t len) {
     memset(iv + 8, acc, 8);
     aes_.cbc_decrypt(data, enc, iv);
     if (data[0] != 0x2F || data[1] != 0x2F) return fail_(Error::kWrongKey);
+    // Only the decrypted bytes count: anything after them is not protected by the key
+    plen = enc;
+    // AMIS record layout: pins the access number (rest of the IV) and catches changed ciphertext blocks
+    if (header_check_ && !amis_layout(data, enc)) return fail_(Error::kHeader);
   } else if (mode == 0) {
     if (has_key_) return fail_(Error::kNotEncrypted);  // the AMIS always encrypts: a plain frame is not from it
   } else {
     return fail_(Error::kUnsupportedEncryption);
   }
+  plain_off_ = static_cast<size_t>(data - buf_);
+  plain_len_ = plen;
 
   Reading r;
   r.header_id = le32(id);
@@ -324,9 +381,16 @@ uint8_t Reader::decode_application_(uint8_t *app, size_t len) {
   r.version = ver;
   r.medium = med;
   r.access_number = acc;
-  if (!parse_records_(data, dlen, r)) return fail_(Error::kRecordFormat);
+  if (!parse_records_(data, plen, r)) return fail_(Error::kRecordFormat);
   if (r.present == 0) return fail_(Error::kNoData);
   if ((r.present & required_) != required_) return fail_(Error::kIncomplete);
+  const bool check_time = has_key_ && replay_check_ && r.time.valid;
+  const uint32_t t = check_time ? static_cast<uint32_t>(r.time.to_unix_utc()) : 0;  // years 2000..2106
+  if (check_time && have_time_ && t <= last_time_) return fail_(Error::kReplay);
+  if (check_time) {
+    last_time_ = t;
+    have_time_ = true;
+  }
 
   reading_ = r;
   have_reading_ = true;
@@ -339,7 +403,9 @@ uint8_t Reader::decode_application_(uint8_t *app, size_t len) {
   return kReading;
 }
 
-// Data records per EN 13757-3: DIF [DIFE...] VIF [VIFE...] data. Unknown records are skipped.
+// Data records per EN 13757-3: DIF [DIFE...] VIF [VIFE...] data. Unknown records are skipped. Not supported
+// (the AMIS does not use them), the whole frame is then rejected with kRecordFormat: variable length LVAR >= 0xC0
+// and plain-text VIF 7C/FC.
 bool Reader::parse_records_(const uint8_t *p, size_t len, Reading &out) {
   size_t i = 0;
   while (i < len) {
@@ -383,9 +449,14 @@ bool Reader::parse_records_(const uint8_t *p, size_t len, Reading &out) {
       AMIS_MEMCPY_P(&k, &kf, sizeof(k));  // table lives in flash on the ESP8266
       if (k.len != key_len || memcmp(k.bytes, p + key_start, key_len) != 0) continue;
       switch (k.field) {
-        case Reading::kTime:
-          if (dlen != 6 || !out.time.decode_type_i(v)) continue;
+        case Reading::kTime: {
+          if (dlen != 6) continue;
+          // decoded into a copy: a second time record must not leave a half-written time behind
+          DateTime dt;
+          dt.decode_type_i(v);
+          out.time = dt;  // kTime is set even if the meter flags the time invalid: see time.valid
           break;
+        }
         case Reading::kEnergyImport: out.energy_import_wh = le32(v); break;
         case Reading::kEnergyExport: out.energy_export_wh = le32(v); break;
         case Reading::kReactiveEnergyImport: out.reactive_energy_import_varh = le32(v); break;

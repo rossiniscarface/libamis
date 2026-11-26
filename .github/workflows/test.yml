@@ -20,6 +20,8 @@ jobs:
         run: make -C test CXX=${{ matrix.cxx }}
       - name: Sanitizer
         run: make -C test sanitize CXX=${{ matrix.cxx }}
+      - name: S-box tables
+        run: python3 tools/gen_sbox.py
       - name: Without IEC part
         run: ${{ matrix.cxx }} -std=c++17 -Wall -Wextra -Werror -DLIBAMIS_NO_IEC -Isrc -c src/*.cpp
       - name: CMake
@@ -39,7 +41,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.platformio
-          key: pio-${{ matrix.env }}-${{ hashFiles('ci/platformio.ini') }}
+          key: pio-6.2.0-${{ matrix.env }}-${{ hashFiles('ci/platformio.ini') }}
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
@@ -47,6 +49,13 @@ jobs:
         run: pip install platformio==6.2.0
       - name: Build
         run: pio run -d ci -e ${{ matrix.env }}
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fuzz (libFuzzer, ASan, UBSan), 30 s per target
+        run: make -C test fuzz FUZZ_TIME=30
 
   package:
     runs-on: ubuntu-latest

@@ -14,3 +14,4 @@ test/fuzz_corpus/
 crash-*
 leak-*
 timeout-*
+externalanalyse/

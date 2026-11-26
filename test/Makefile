@@ -18,8 +18,8 @@ vectors.h: gen_vectors.py
 	python3 gen_vectors.py
 
 sanitize:
-	$(CXX) -std=c++17 -g -fsanitize=address,undefined -I../src $(SRC) -o amis_test_san && ./amis_test_san
-	$(CXX) -std=c++17 -g -fsanitize=address,undefined -DLIBAMIS_MAX_FRAME=101 -I../src $(SRC) -o amis_test_san_small && ./amis_test_san_small
+	$(CXX) -std=c++17 -g -fsanitize=address,undefined -fno-sanitize-recover=all -I../src $(SRC) -o amis_test_san && ./amis_test_san
+	$(CXX) -std=c++17 -g -fsanitize=address,undefined -fno-sanitize-recover=all -DLIBAMIS_MAX_FRAME=101 -I../src $(SRC) -o amis_test_san_small && ./amis_test_san_small
 
 # Fuzzing with libFuzzer, ASan and UBSan (needs clang). FUZZ_TIME = seconds per target.
 FUZZ_TIME ?= 60

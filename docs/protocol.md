@@ -78,8 +78,16 @@ blocks (**5**).
 - The plaintext starts and ends with the filler bytes `2F 2F`. If `2F 2F` is missing at the start, the key is
   wrong.
 - With a key set, libamis only accepts security mode 5; an unencrypted frame (mode 0) is reported as
-  `Error::kNotEncrypted`. Otherwise anyone with access to the optical port could feed in made-up values without
-  knowing the key.
+  `Error::kNotEncrypted`.
+- Mode 5 has **no MAC**. CBC decryption gives plaintext block 0 = D(C0) XOR IV, and the IV comes from cleartext
+  header bytes, so changing the header flips the same bits in the first 16 plaintext bytes without the key.
+  Changing ciphertext block i garbles plaintext block i and flips the same bits in block i+1. With a key set
+  libamis therefore requires the header values Netz OÖ fixes (identification 0, 0x4C2D, 0x01, 0x0E) and the
+  record layout of table 2 in the 80 plaintext bytes; every block holds at least 4 fixed bytes, so any change is
+  caught (`Error::kHeader`). This also pins the access number, which fills IV bytes 8–15. Only the encrypted length from the configuration word is
+  parsed; bytes after it are not protected and ignored.
+- Nothing in the frame is fresh by itself: an older frame decrypts just as well. With a key set, libamis requires
+  the meter time (UTC) to be newer than that of the last accepted reading (`Error::kReplay`).
 
 ## 5. Data records (section 2.4.2.8, table 2)
 
@@ -148,7 +156,7 @@ class (`amis::IecReader`), use at your own responsibility. While it runs, the cu
 - Request `/?` [device address] `!` CR LF. The device address is the serial number; without an address every
   meter answers. The optical port normally runs at the “web” baud rate and only switches to IEC 62056-21 with
   the first received character, so the request has to be **repeated** (manual 5.2.12.2). The manual says to wait
-  1500–2200 ms before repeating (5.2.4); libamis waits 5 s and sends it up to 3 times (see below why).
+  1500–2200 ms before repeating (5.2.4); libamis waits 5 s and sends it up to 4 times (see below why).
 - Identification `/XXXZ<identification>` CR LF: XXX = “SAT”, Z = baud rate code (TD-351x always reports
   “6” = 19200 for compatibility, 5.2.1), identification = part number, e.g. 2351102623000045 for
   G23-511--.02/623-000045 (5.2.7), at most 16 characters (5.2.8.2).
@@ -186,7 +194,9 @@ Measured with a RAM trace on a reader at a real meter; it differs from the manua
 - The first acknowledgement is always refused with `ER0007`, the repeated one 7 s later is accepted. The original
   ESP8266 firmware works the same way without noticing: it ignores everything but `F.F(` and repeats the
   acknowledgement after 7 s.
-- Without STX there is no defined start for the block check character, so libamis does not check it then.
+- Without STX there is no defined start for the block check character, so libamis does not check it then
+  (`IecReader::verified()` stays false; lines with a lost first character come out as normal lines with a
+  shorter OBIS code).
   libamis only takes data without STX after a repeated acknowledgement (or in the mode without acknowledgement),
   and it ignores an optical echo of its own acknowledgement.
 - In most readouts at that meter the first character of one to four lines was missing (per 12 KB, e.g.

@@ -59,8 +59,9 @@ class IecReader {
   // not higher than this value, otherwise everything stays at 300 Bd. Default '0': always 300 Bd (proven,
   // the billing data set then takes about 7 min). With '6' the TD-351x sends the data at 19200 Bd.
   void set_max_baud_char(char z) { max_z_ = z; }
-  // How often the request is sent if the meter does not answer (default 3). The TD-351x only wakes up its
-  // IEC mode with the first received character, so the request usually has to be repeated (manual 5.2.12.2).
+  // How often the request is sent in total if the meter does not answer (default 4, i.e. at 0, 5, 10 and 15 s).
+  // The TD-351x only wakes up its IEC mode with the first received character and answers only after it has given
+  // up the M-Bus session (about 10 s), so the request has to be repeated (manual 5.2.12.2).
   void set_request_tries(uint8_t n) { request_tries_ = n ? n : 1; }
   // Pause between two requests without answer (default 5000 ms). A real TD-351x did not answer requests
   // 2 s apart (the 1500..2200 ms of the manual), but does with 5 s like the original firmware.
@@ -75,7 +76,7 @@ class IecReader {
   void set_ack_tries(uint8_t n) { ack_tries_ = n ? n : 1; }
   void set_ack_retry_ms(uint32_t ms) { ack_retry_ms_ = ms; }
   // Readout without acknowledgement (manual fig. 5-1): after the identification nothing is sent, the meter sends
-  // the data at 300 Bd by itself after its timeout.
+  // the data at 300 Bd by itself after its timeout. An error telegram then ends the readout (kMeterError).
   void set_send_ack(bool on) { send_ack_ = on; }
   // Device address for the request ("/?<address>!"), empty = general address. At most 32 characters, only
   // digits, letters and spaces (manual 5.2.8.1); otherwise returns false and keeps the previous address.
@@ -92,6 +93,9 @@ class IecReader {
   uint8_t push(uint8_t byte, uint32_t now_ms);
   // Call regularly (e.g. in loop()): delayed sending, timeouts
   uint8_t poll(uint32_t now_ms);
+  // Stops a running readout at once and returns no action: nothing is sent (no break), so the meter may keep
+  // sending at the IEC baud rate for a while. The caller has to switch the UART back to 9600 8E1 and call
+  // Reader::reset() itself. error() keeps its last value.
   void abort();
 
   bool active() const { return state_ != State::kIdle; }
@@ -100,9 +104,19 @@ class IecReader {
     return tx_;
   }
   uint32_t baud() const { return baud_; }
+  // Handle kLine and kRawLine right after the push() call that returned them: the next byte overwrites them
+  // (do not OR the actions of several push() calls and read the line afterwards).
+  // Lines are provisional until kDone: with STX the block check comes only at the end (kFailed with kBcc means
+  // the lines may be corrupt, discard them), and a real TD-351x sends the data without STX, so there is no block
+  // check at all (verified() stays false). The parity bit is not checked.
+  // line() takes the OBIS code and the first bracket group (value, unit after '*') plus a second group directly
+  // after it (extra); further groups are dropped, value and extra are cut to 31 characters, unit to 7 (raw_line()
+  // has everything).
   const IecLine &line() const { return line_; }
   // Last data line exactly as received, without CR LF. Only valid right after push() returned kRawLine.
   const char *raw_line() const { return buf_; }
+  // After kDone: the data block came with STX and its block check character matched
+  bool verified() const { return verified_; }
   // The last raw line was longer than 95 characters and is cut off (it is not reported as kLine). Such a line
   // does not end the readout; truncated_lines() counts them since begin().
   bool raw_line_truncated() const { return raw_truncated_; }
@@ -115,8 +129,10 @@ class IecReader {
   const char *identification() const { return ident_; }
   // Error code of an error telegram from the meter, e.g. "ER0007" (manual 5.2.11), else empty
   const char *meter_error() const { return meter_error_; }
-  // Serial number: 0.0.0 from the data set (device address = serial number), else the identification
+  // Serial number: 0.0.0 from the data set (device address = serial number), else the identification (on the
+  // TD-351x it holds the same number, but it is not guaranteed); serial_from_data() tells which one it is
   const char *serial_number() const { return serial_[0] ? serial_ : ident_; }
+  bool serial_from_data() const { return serial_[0] != 0; }
 
   static uint32_t baud_for_char(char z);
 
@@ -128,13 +144,15 @@ class IecReader {
   uint8_t end_of_data_();
   uint8_t data_line_();
   uint8_t ack_due_(uint32_t now_ms);
+  uint8_t repeat_ack_();
+  bool can_repeat_ack_() const;
   void set_tx_(const char *s);
 
   State state_ = State::kIdle;
   Mode mode_ = Mode::kReadout;
   Error error_ = Error::kNone;
   char max_z_ = '0';
-  uint8_t request_tries_ = 3;
+  uint8_t request_tries_ = 4;
   uint32_t request_interval_ms_ = 5000;
   uint32_t reply_delay_ms_ = 700;
   uint8_t ack_tries_ = 3;
@@ -148,7 +166,9 @@ class IecReader {
   bool err_line_ = false;   // the last line was an error telegram
   bool truncated_ = false;  // the current data line is longer than buf_
   bool raw_truncated_ = false;  // the last raw line was truncated
+  bool verified_ = false;       // block check character matched
   uint16_t truncated_lines_ = 0;
+  uint16_t lines_in_block_ = 0;  // data lines delivered in the current block
   uint8_t acks_sent_ = 0;
   uint8_t requests_sent_ = 0;
   char meter_error_[9] = {0};

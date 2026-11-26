@@ -15,13 +15,14 @@ The library handles everything that makes the AMIS special, but it does **not to
   the Netz OÖ customer portal, detection of a wrong key
 - Decoding of the data records: meter clock, 1.8.0, 2.8.0, 3.8.1, 4.8.1, 1.7.0, 2.7.0, 3.7.0, 4.7.0, 1.128.0
 - Repeated frames (lost acknowledgement: same access number and FCB) are detected and not reported twice
+- With a key: checks against forged and replayed frames (header and layout, meter time must move forward)
 
 No heap, no exceptions, no RTTI, no Arduino dependency, C++17. Small RAM footprint: on the ESP8266 tables and
 texts stay in flash, and `-DLIBAMIS_MAX_FRAME=128` shrinks the frame buffer to what the AMIS needs; `-DLIBAMIS_NO_STATS` leaves out the
 counters of `stats()` (44 bytes per `Reader`). Builds for **ESP8266**, **ESP32** (ESP32, S3, C3,
 C6, …), other microcontrollers and the PC.
 
-**Status:** version 0.3.1. Tested on the PC (including the example telegram from the Netz OÖ specification) and
+**Status:** version 0.4.0. Tested on the PC (including the example telegram from the Netz OÖ specification) and
 built for ESP8266, ESP32, ESP32-S3, ESP32-C3 and ESP32-C6. On an ESP8266 it runs inside a
 [fork of the ESP8266 firmware](https://github.com/rossiniscarface/amis_smartmeter_reader/tree/libamis), checked
 against a simulated meter and **tested at a real TD-3511**: M-Bus values, serial number and the billing data set. Protocol details: [docs/protocol.md](docs/protocol.md), changes: [CHANGELOG.md](CHANGELOG.md).
@@ -47,10 +48,26 @@ if (st & amis::Reader::kError) log(amis::error_str(reader.last_error()));
 ```
 
 Feed the bytes **one at a time**. That way exactly one acknowledgement goes out per frame, even if two frames are
-waiting in the receive buffer.
+waiting in the receive buffer. But the `E5` must reach the meter within about 85 ms after the end of its frame:
+an acknowledgement for a frame that waited longer comes too late (the meter ignores it or counts it for a later
+frame). So the `E5` has to come from the device at the reading head, not from a decoder behind a TCP/WLAN bridge,
+and the main loop must not block (modem sleep, blocking network calls).
 
-**Only encrypted frames:** with a key set, an unencrypted frame (security mode 0) is rejected with
-`Error::kNotEncrypted`; the AMIS always encrypts, so such a frame does not come from the meter.
+**Protection with a key:** OMS security mode 5 encrypts, but has no MAC, so libamis adds these checks when a key
+is set (all on by default):
+
+- An unencrypted frame (security mode 0) is rejected with `Error::kNotEncrypted`; the AMIS always encrypts.
+- Only the decrypted bytes are parsed; anything appended after them is ignored.
+- `set_header_check()`: the header (it forms the IV) must have the values Netz OÖ fixes for every meter
+  (identification 0, manufacturer 0x4C2D, version 0x01, medium 0x0E), and the 80 decrypted bytes must have the
+  record layout of the AMIS (Netz OÖ table 2: the same record headers at the same places, in every AES block).
+  Otherwise `Error::kHeader`. Turn it off for other meters.
+- `set_replay_check()`: the meter time (UTC) must be newer than that of the last accepted reading, else
+  `Error::kReplay` (the frame is still acknowledged). If Netz OÖ sets the meter clock back, readings stop until
+  the meter time passes the last accepted one; `reset_replay_check()`, `set_key()` or a restart clear it.
+
+Someone at the optical port without the key can then only block the meter, not feed in other values (`online()`
+goes false). Without a key none of this applies.
 
 **UART errors:** M-Bus relies on the even parity of every character together with the frame checksum; the 8-bit
 sum alone misses two bit errors that cancel out, and such a frame would be acknowledged. So read the UART in
@@ -60,7 +77,10 @@ the block and call `reader.push_error(millis())` instead (no `E5` for that frame
 Arduino-ESP32: `Serial.onReceiveError()`. **Not** on the ESP8266 Arduino core: there `Serial.hasRxError()` is
 also set by the RX timeout interrupt (`UITO` in `cores/esp8266/uart.cpp`), i.e. after nearly every received
 block, so it cannot tell a parity error from normal data (tested at a real meter: it discarded valid data). Only
-`Serial.hasOverrun()` is usable there.
+`Serial.hasOverrun()` is usable there. The examples show the pattern for all three platforms.
+
+**Threads:** `Reader` and `IecReader` are not thread-safe. Call all their functions from one task; a UART error
+callback in another task (Arduino-ESP32 `onReceiveError()`) should only set a flag.
 
 | Field in `Reading` | OBIS | Unit |
 |---|---|---|
@@ -69,8 +89,8 @@ block, so it cannot tell a parity error from normal data (tested at a real meter
 | `power_import_w` / `power_export_w` | 1.7.0 / 2.7.0 | W |
 | `reactive_power_import_var` / `reactive_power_export_var` | 3.7.0 / 4.7.0 | var |
 | `inkasso` | 1.128.0 | Wh (signed, prepayment register) |
-| `time` | meter clock (local time with DST bit), `to_unix_utc()`, `raw` (the 6 bytes as sent) | |
-| `present` | which fields were in the frame | |
+| `time` | meter clock (local time with DST bit), `valid`, `to_unix_utc()`, `raw` (the 6 bytes as sent) | |
+| `present` | which fields were in the frame (`kTime` also for a time the meter flags invalid: check `time.valid`) | |
 | `header_id`, `manufacturer`, `version`, `medium` | M-Bus header: address of the **reading head**, the same for every AMIS (Netz OÖ 2.4.2.6) | |
 
 The meter number is **not** in the M-Bus frame (`header_id` is 0). It only comes from the IEC identification or
@@ -88,35 +108,46 @@ More: `online(now_ms)`, `stats()` (frames, acknowledgements, errors), `last_plai
 
 `amis::IecReader` only reads in mode C and never programs anything. Two variants:
 
-- `Mode::kIdentOnly`: send `/?!`, receive the identification (manufacturer “SAT”, part or serial number), then
-  break. Takes about 10–15 s at a real meter (it only answers after it has left the M-Bus session).
+- `Mode::kIdentOnly`: send `/?!`, receive the identification (manufacturer “SAT” and the identification, per
+  the manual the part number; at a TD-351x the same number as the serial number 0.0.0), then break. Takes about 10–15 s at a real meter (it only answers after it has left the M-Bus session).
 - `Mode::kReadout`: complete billing data set (among others 0.0.0 serial number, tariff registers 1.8.1–1.8.6,
   1.6.0/2.6.0 quarter-hour maximum demand current and previous periods, voltages/currents 32.7/31.7 …,
   historic values). By default everything runs at 300 baud and takes about 7 min. The meter only switches
   to a faster rate if the acknowledgement repeats the code from its identification (TD-351x: “6” = 19200),
   so `set_max_baud_char('6')` is the only faster option.
 
-The request is repeated up to 3 times, 5 s apart: the meter only wakes up its IEC mode with the first received
+The request is sent up to 4 times, 5 s apart: the meter only wakes up its IEC mode with the first received
 character, and a real TD-3511 answers only after it has given up the M-Bus session (about 10 s). It refuses the
 first acknowledgement with `ER0007` and sends the data after the repeated one, without STX; libamis handles both
 (`set_ack_tries()`, `set_ack_retry_ms()`). An error telegram that remains (`ERxxxx`, with or without brackets)
 ends the readout with `Error::kMeterError` and `meter_error()`. `set_total_timeout_ms()` (default 120 s) limits
 the time until the data starts; while data arrives, the readout only ends if no character comes for 2 s. A data
 line longer than 95 characters is cut off (`raw_line_truncated()`, `truncated_lines()`), the readout goes on.
+Lines are provisional until `kDone`: with STX the block check character comes at the end (`kFailed` with
+`Error::kBcc`: discard the lines), and the TD-351x sends the data without STX, so there is no check at all then;
+`verified()` tells whether the block was checked. `serial_from_data()` tells whether `serial_number()` came from
+0.0.0 or falls back to the identification. `abort()` stops at once without sending anything: switch back to
+9600 8E1 and call `reader.reset()` yourself.
 If a cumulation (end of a billing period) falls into the readout, the historic value numbers of the tariff
 registers can be inconsistent (manual 5.2.12.3): read again in that case. Details: [docs/protocol.md](docs/protocol.md).
 
+Handle the actions of **every** `push()` and `poll()` call right away: the next byte overwrites `line()` and
+`raw_line()`, so do not collect the actions of several bytes and read the line afterwards.
+
 ```cpp
 amis::IecReader iec;
-uint8_t a = iec.begin(amis::IecReader::Mode::kIdentOnly, millis());   // only kSetSerial: 300 Bd 7E1
-// loop: a |= iec.push(byte, millis()) for every byte, a |= iec.poll(millis()); always send first, then switch
-if (a & amis::IecReader::kSend)      { size_t n; const uint8_t *d = iec.tx(&n); uart_write(d, n); uart_flush(); }
-if (a & amis::IecReader::kSetSerial) uart_config(iec.baud(), 7E1);   // switch only AFTER sending
-if (a & amis::IecReader::kLine)      use(iec.line());                // obis / value / unit / extra
-if (a & amis::IecReader::kRawLine)   save(iec.raw_line());           // line as received (also "!")
-if (a & (amis::IecReader::kDone | amis::IecReader::kFailed)) {
-  uart_config(9600, 8E1); reader.reset();                            // back to M-Bus
-  // iec.serial_number(), iec.identification(), iec.error()
+handle(iec.begin(amis::IecReader::Mode::kIdentOnly, millis()));   // kSetSerial: 300 Bd 7E1
+
+// in the loop: handle(iec.push(byte, millis())) for every received byte, then handle(iec.poll(millis()))
+void handle(uint8_t a) {
+  if (a & amis::IecReader::kSend)      { size_t n; const uint8_t *d = iec.tx(&n); uart_write(d, n); uart_flush(); }
+  if (a & amis::IecReader::kSetSerial) uart_config(iec.baud(), 7E1);   // switch only AFTER sending
+  if (a & amis::IecReader::kLine)      keep(iec.line());               // obis / value / unit / extra (provisional)
+  if (a & amis::IecReader::kRawLine)   keep_raw(iec.raw_line());       // line as received (also "!")
+  if (a & (amis::IecReader::kDone | amis::IecReader::kFailed)) {
+    uart_config(9600, 8E1); reader.reset();                            // back to M-Bus
+    // kDone: use the kept lines; iec.serial_number(), iec.identification(), iec.verified(); kFailed: iec.error()
+  }
 }
 ```
 
@@ -125,11 +156,16 @@ again (search mode).
 
 ## Integration
 
-- **PlatformIO:** `lib_deps = https://github.com/rossiniscarface/libamis.git#v0.3.1` (see `library.json`)
+- **PlatformIO:** `lib_deps = https://github.com/rossiniscarface/libamis.git#v0.4.0` (see `library.json`).
+  Set `LIBAMIS_MAX_FRAME` / `LIBAMIS_NO_STATS` in `build_flags`, never with `#define` in a source file: a
+  mismatch fails to link.
 - **Arduino IDE:** copy the folder to `libraries/`, `#include <amis.h>`; examples in
   [`examples/esp8266_arduino`](examples/esp8266_arduino) and [`examples/esp32_arduino`](examples/esp32_arduino)
-- **ESP-IDF:** put the folder under `components/` (the `CMakeLists.txt` detects ESP-IDF); example in
-  [`examples/esp_idf`](examples/esp_idf)
+- **ESP-IDF** (5.x): put the folder under `components/`, named **`libamis`** (ESP-IDF names a component after
+  its folder, so rename a `libamis-main` or `libamis-0.4.0` download); the `CMakeLists.txt` detects ESP-IDF.
+  Example in [`examples/esp_idf`](examples/esp_idf), which uses the repository root as component directory.
+- **ESP8266 on UART0:** the boot ROM banner and crash dumps also go out on GPIO1 (TX). The meter ignores them,
+  but to keep them away from the head use `Serial.swap()` (head on GPIO15/GPIO13), see the ESP8266 example.
 - **ESPHome:** via an external component that uses this library (planned)
 - **PC:** `cmake -B build && cmake --build build && ctest --test-dir build`
 
@@ -151,7 +187,8 @@ selection, BCC, break, timeout). CI runs the tests with GCC and Clang and builds
 
 Both parsers take untrusted input (anything that reaches the optical port), so they never write outside their
 fixed buffers. `test/fuzz/` has libFuzzer targets for `Reader` (with both frame buffer sizes) and `IecReader`;
-before 0.3.1 they ran 5.7 million inputs under ASan and UBSan without a finding.
+before 0.3.1 they ran 5.7 million inputs under ASan and UBSan without a finding. CI runs them for 30 s per target,
+with UBSan findings fatal, and checks the AES tables with `tools/gen_sbox.py`.
 
 ## Important per Netz OÖ
 

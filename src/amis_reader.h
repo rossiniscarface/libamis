@@ -27,6 +27,18 @@
 #define LIBAMIS_MAX_FRAME 261
 #endif
 
+// LIBAMIS_MAX_FRAME and LIBAMIS_NO_STATS change the layout of amis::Reader. Set them as build flags for the
+// whole project (PlatformIO build_flags, CMake target_compile_definitions), not with #define in one source file.
+// The configuration is part of the symbol names (inline namespace), so a mismatch fails to link instead of
+// corrupting memory. LIBAMIS_MAX_FRAME must be a plain number.
+#define LIBAMIS_CAT2_(a, b) a##b
+#define LIBAMIS_CAT_(a, b) LIBAMIS_CAT2_(a, b)
+#ifdef LIBAMIS_NO_STATS
+#define LIBAMIS_CFG_NS LIBAMIS_CAT_(LIBAMIS_CAT_(cfg_f, LIBAMIS_MAX_FRAME), _n)
+#else
+#define LIBAMIS_CFG_NS LIBAMIS_CAT_(LIBAMIS_CAT_(cfg_f, LIBAMIS_MAX_FRAME), _s)
+#endif
+
 namespace amis {
 
 // Date/time of the meter (M-Bus type I, 6 bytes, local time with DST bit)
@@ -43,7 +55,8 @@ struct DateTime {
   bool valid = false;
   uint8_t raw[6] = {0};  // the 6 bytes as sent (M-Bus type I / CP48, LSB first)
 
-  // Decodes 6 bytes of M-Bus type I. Returns false for implausible values.
+  // Decodes 6 bytes of M-Bus type I. Returns false if the meter flags the time invalid or the date cannot exist
+  // (month 1..12, day within the month, hour < 24, minute and second < 60).
   bool decode_type_i(const uint8_t b[6]);
   // Seconds since 1970 (UTC), assuming the meter runs on CET/CEST (Austria). Only meaningful if valid.
   int64_t to_unix_utc() const;
@@ -76,12 +89,16 @@ struct Reading {
     kInkasso = 1 << 9,
     kAll = 0x3FF,  // all of the above
   };
+  // kTime is set for every well-formed time record, even one the meter flags invalid: check time.valid.
   uint16_t present = 0;
   bool has(Field f) const { return (present & f) != 0; }
 
-  // Net power import - export in W (positive = drawing from the grid)
+  // Net power import - export in W (positive = drawing from the grid), limited to the int32_t range
   int32_t power_balance_w() const {
-    return static_cast<int32_t>(power_import_w) - static_cast<int32_t>(power_export_w);
+    const int64_t d = static_cast<int64_t>(power_import_w) - static_cast<int64_t>(power_export_w);
+    if (d > INT32_MAX) return INT32_MAX;
+    if (d < INT32_MIN) return INT32_MIN;
+    return static_cast<int32_t>(d);
   }
 
   // From the M-Bus header: the secondary address of the reading head (terminal device), fixed by Netz OOe
@@ -106,6 +123,8 @@ enum class Error : uint8_t {
   kNoData,                  // frame without any known value
   kIncomplete,              // a value required with set_required_fields() is missing
   kNotEncrypted,            // unencrypted frame (security mode 0) although a key is set
+  kHeader,                  // with a key: header or record layout differs from the AMIS (set_header_check())
+  kReplay,                  // with a key: meter time not newer than the last reading (set_replay_check())
 };
 // Short English text for an error. On the ESP8266 the texts live in flash and are copied into one shared
 // buffer, so the result is only valid until the next error_str() call (not thread-safe there).
@@ -125,6 +144,11 @@ struct Stats {
   uint32_t line_errors = 0;     // UART errors reported with push_error()
 };
 
+inline namespace LIBAMIS_CFG_NS {
+
+// Not thread-safe: call push(), push_error(), reset() and all accessors from one task. In a UART error callback
+// that runs in another task (e.g. Arduino-ESP32 onReceiveError()), only set a flag and call push_error() from
+// the task that calls push().
 class Reader {
  public:
   static constexpr uint8_t kAck = 0xE5;
@@ -145,16 +169,34 @@ class Reader {
   // encrypted frames (security mode 5) are accepted; an unencrypted one gives Error::kNotEncrypted, so nobody
   // with access to the optical port can feed in made-up values without the key. Without a key, unencrypted
   // frames are read (for tests and plain M-Bus sources).
+  // Encrypted frames carry no MAC (OMS mode 5), so with a key libamis also checks the header (it forms the IV)
+  // and the meter time against replays, see set_header_check() and set_replay_check().
   // The key stays in RAM as long as the Reader lives (as AES round keys); libamis does not wipe it.
   bool set_key_hex(const char *hex);
   void set_key(const uint8_t key[16]);
   bool has_key() const { return has_key_; }
 
+  // With a key (default on): the header must have the values Netz OOe fixes for every meter (section 2.4.2.6:
+  // identification 0, manufacturer 0x4C2D, version 0x01, medium 0x0E), and the 80 decrypted bytes must have the
+  // record layout of the AMIS (table 2: the same record headers at the same places). Otherwise Error::kHeader.
+  // Mode 5 has no MAC: without this check someone without the key could flip bits of the decrypted data by
+  // changing the header (it forms the CBC IV) or a ciphertext block.
+  void set_header_check(bool on) { header_check_ = on; }
+  // With a key (default on): a reading is only accepted if its meter time (UTC, see DateTime::to_unix_utc) is
+  // newer than that of the last accepted reading; an older or equal one gives Error::kReplay (still with E5).
+  // This stops replays of recorded frames. A reading with an invalid time is not checked. If the meter clock is
+  // set back, readings stop until the meter time passes the last accepted one (or until reset_replay_check(),
+  // set_key() or a restart).
+  void set_replay_check(bool on) { replay_check_ = on; }
+  void reset_replay_check() { have_time_ = false; }
+
   // M-Bus primary address of the reading head (the AMIS looks for 240 = 0xF0)
   void set_primary_address(uint8_t addr) { address_ = addr; }
   // A longer gap inside a frame discards the frame (default 500 ms). now_ms is the processing time, not the
-  // receive time: a 101-byte frame takes about 116 ms, the next one follows about 885 ms later, so 500 ms
-  // tolerates a stalled main loop and still separates two frames.
+  // receive time, so a gap in processing counts as a gap on the line: a 101-byte frame takes about 116 ms, the
+  // next one follows about 885 ms later, so 500 ms still separates two frames while a frame that is processed
+  // with a stall of more than 500 ms in its middle is dropped. The timeout only decides whether a frame is
+  // decoded: an E5 sent more than about 85 ms after the last byte of its frame counts as missing for the meter.
   void set_interbyte_timeout_ms(uint32_t ms) { interbyte_timeout_ms_ = ms; }
 
   // Fields (Reading::Field bits) every frame must contain; if one is missing, push() reports kError with
@@ -163,7 +205,11 @@ class Reader {
   void set_required_fields(uint16_t mask) { required_ = mask; }
 
   // Process one received byte. now_ms = monotonic time in ms (millis(), esp_timer, ...).
-  // On kSendAck acknowledge immediately (call byte by byte so exactly one E5 goes out per frame).
+  // On kSendAck acknowledge immediately (call byte by byte so exactly one E5 goes out per frame). E5 is requested
+  // for every formally valid SND_UD, also for repetitions and frames whose content is rejected (EN 13757-2).
+  // An E5 must come from the device at the reading head within about 85 ms: a decoder behind a TCP/WLAN bridge,
+  // or one that works off a backlog, cannot acknowledge in time (late E5s are ignored by the meter or counted for
+  // a later frame).
   uint8_t push(uint8_t byte, uint32_t now_ms);
 
   // Report a UART line error (parity, framing or overrun) seen while receiving. Drops the frame in progress:
@@ -186,8 +232,9 @@ class Reader {
   // Is the last valid reading younger than max_age_ms?
   bool online(uint32_t now_ms, uint32_t max_age_ms = 5000) const;
 
-  // Decrypted payload of the last long frame (for debugging). It is decrypted in place in the frame buffer,
-  // so it is only valid until the next call of push().
+  // Decrypted payload of the last long frame (for debugging): set after a successful decryption (or for an
+  // accepted unencrypted frame), length 0 otherwise. It is decrypted in place in the frame buffer, so it is only
+  // valid until the next call of push().
   const uint8_t *last_plaintext(size_t *len) const {
     if (len) *len = plain_len_;
     return buf_ + plain_off_;
@@ -207,8 +254,12 @@ class Reader {
 
   Aes128 aes_;
   bool has_key_ = false;
+  bool header_check_ = true;
+  bool replay_check_ = true;
+  bool have_time_ = false;
   uint8_t address_ = 0xF0;
   uint16_t required_ = 0;
+  uint32_t last_time_ = 0;  // meter time (UTC seconds) of the last accepted reading
   uint32_t interbyte_timeout_ms_ = 500;
 
   uint8_t buf_[kMaxFrame];
@@ -234,4 +285,5 @@ class Reader {
 #endif
 };
 
+}  // inline namespace LIBAMIS_CFG_NS
 }  // namespace amis

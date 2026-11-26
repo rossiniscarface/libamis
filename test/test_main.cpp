@@ -107,7 +107,7 @@ static void test_frames() {
   CHECK(x.inkasso == -42);
   CHECK(x.present == 0x3FF);
   CHECK(x.time.valid && x.time.hour == 9 && x.time.minute == 20 && !x.time.dst);
-  CHECK(x.header_id == 0x12345678 && x.manufacturer == 0x4C2D && x.access_number == 0x21);
+  CHECK(x.header_id == 0 && x.manufacturer == 0x4C2D && x.access_number == 0x21);
   CHECK(r.online(2200) && !r.online(9000));
 
   // Same frame again (our E5 got lost): acknowledge again, but do not decode twice
@@ -338,14 +338,15 @@ static void test_iec() {
   tx = r4.tx(&n);
   CHECK(n == 21 && memcmp(tx, "/?2351102623000045!\r\n", 21) == 0);
   CHECK(r4.poll(0) == amis::IecReader::kSend);
-  // The request is repeated twice every 5 s (manual 5.2.12.2), then the reader gives up 2.5 s later
+  // The request is sent 4 times in total, every 5 s (manual 5.2.12.2), then the reader gives up 2.5 s later
   CHECK(r4.poll(4900) == 0);
   CHECK(r4.poll(5100) == amis::IecReader::kSend);
   tx = r4.tx(&n);
   CHECK(n == 21 && tx[0] == '/');
   CHECK(r4.poll(10200) == amis::IecReader::kSend);
-  CHECK(r4.poll(12600) == 0 && r4.active());
-  CHECK(r4.poll(12800) == amis::IecReader::kFailed && r4.error() == amis::IecReader::Error::kNoIdent);
+  CHECK(r4.poll(15300) == amis::IecReader::kSend);
+  CHECK(r4.poll(17700) == 0 && r4.active());
+  CHECK(r4.poll(17900) == amis::IecReader::kFailed && r4.error() == amis::IecReader::Error::kNoIdent);
 
   // Interval can be set; an incomplete answer is dropped and the request sent again
   amis::IecReader r4b;
@@ -780,6 +781,7 @@ static void test_reader_030() {
   {
     amis::Reader r;
     r.set_key_hex(kTestKeyHex);
+    r.set_replay_check(false);  // the same frame is fed again on purpose
     int acks = 0;
     uint8_t st = feed(r, kFrame1, sizeof(kFrame1), 0, &acks);  // C = 53 (FCV, FCB = 0)
     CHECK(st & amis::Reader::kReading);
@@ -810,17 +812,23 @@ static void test_reader_030() {
     frame_encrypt(f, plain);
     amis::Reader r;
     r.set_key_hex(kTestKeyHex);
+    r.set_header_check(false);  // the AMIS layout check would reject the missing 1.8.0 already
     int acks = 0;
     uint8_t st = feed(r, f, sizeof(f), 0, &acks);
     CHECK((st & amis::Reader::kReading) && !r.reading().has(amis::Reading::kEnergyImport));
     CHECK(r.reading().energy_import_wh == 0 && r.reading().has(amis::Reading::kEnergyExport));
     amis::Reader r2;
     r2.set_key_hex(kTestKeyHex);
+    r2.set_header_check(false);
     r2.set_required_fields(amis::Reading::kAll);
     acks = 0;
     st = feed(r2, f, sizeof(f), 0, &acks);
     CHECK(st == (amis::Reader::kSendAck | amis::Reader::kError) && acks == 1);
     CHECK(r2.last_error() == amis::Error::kIncomplete);
+    amis::Reader r3;  // default: layout check
+    r3.set_key_hex(kTestKeyHex);
+    st = feed(r3, f, sizeof(f), 0, &acks);
+    CHECK((st & amis::Reader::kError) && r3.last_error() == amis::Error::kHeader);
     st = feed(r2, kFrame2, sizeof(kFrame2), 1000, &acks);  // complete frame
     CHECK(st & amis::Reader::kReading);
   }
@@ -884,14 +892,385 @@ static void test_reader_030() {
   }
 }
 
+// Long frame 68 L L 68 C A CI <hdr 12 bytes> <data> CS 16 with a plain header (id 0, SAM, 01, 0E), mode from cfg
+static size_t build_frame(uint8_t *out, uint8_t c, uint8_t a, uint8_t ci, uint16_t cfg, uint8_t acc,
+                          const uint8_t *data, size_t n) {
+  const uint8_t hdr[12] = {0, 0, 0, 0, 0x2D, 0x4C, 0x01, 0x0E, acc, 0x00, static_cast<uint8_t>(cfg),
+                           static_cast<uint8_t>(cfg >> 8)};
+  size_t k = 0;
+  out[k++] = 0x68;
+  const uint8_t L = static_cast<uint8_t>(3 + sizeof(hdr) + n);
+  out[k++] = L;
+  out[k++] = L;
+  out[k++] = 0x68;
+  out[k++] = c;
+  out[k++] = a;
+  out[k++] = ci;
+  memcpy(out + k, hdr, sizeof(hdr));
+  k += sizeof(hdr);
+  memcpy(out + k, data, n);
+  k += n;
+  uint8_t cs = 0;
+  for (size_t i = 4; i < k; i++) cs = static_cast<uint8_t>(cs + out[i]);
+  out[k++] = cs;
+  out[k++] = 0x16;
+  return k;
+}
+
+// STX <body> ETX BCC (BCC = XOR from after STX up to and including ETX), fed byte by byte
+static uint8_t iec_block(amis::IecReader &r, const char *body, uint32_t *t, bool good_bcc = true) {
+  uint8_t all = r.push(0x02, (*t)++);
+  uint8_t bcc = 0;
+  for (const char *c = body; *c; c++) {
+    bcc ^= static_cast<uint8_t>(*c);
+    all |= r.push(static_cast<uint8_t>(*c), (*t)++);
+  }
+  bcc ^= 0x03;
+  all |= r.push(0x03, (*t)++);
+  all |= r.push(good_bcc ? bcc : static_cast<uint8_t>(bcc ^ 0x01), (*t)++);
+  return all;
+}
+
+// Findings of the external review (0.4.0)
+static void test_iec_040() {
+  // R7/R18: verified() only after STX and a matching block check character
+  {
+    amis::IecReader r;
+    uint32_t t = 0;
+    iec_start_readout(r, &t);
+    const uint8_t a = iec_block(r, "0.0.0(TEST000000000001)\r\n1.8.0(001234.567*kWh)\r\n!\r\n", &t);
+    CHECK((a & amis::IecReader::kDone) && r.verified() && r.serial_from_data());
+    CHECK(strcmp(r.serial_number(), "TEST000000000001") == 0);
+    // without STX after the repeated acknowledgement (real TD-351x): done, but not verified
+    amis::IecReader r2;
+    t = 0;
+    iec_start_readout(r2, &t);
+    iec_block(r2, "ER0007", &t);  // refused
+    t += 7100;
+    r2.poll(t);  // repeated acknowledgement
+    uint8_t b = iec_feed(r2, "1.8.0(001234.567*kWh)\r\n!\r\n\x03", &t);
+    b |= r2.push('X', t++);
+    CHECK((b & amis::IecReader::kDone) && !r2.verified() && !r2.serial_from_data());
+    CHECK(strcmp(r2.serial_number(), "TEST000000000001") == 0);  // falls back to the identification
+  }
+  // R19: without acknowledgement an error telegram ends the readout, nothing is sent again
+  {
+    amis::IecReader r;
+    r.set_send_ack(false);
+    uint32_t t = 0;
+    r.begin(amis::IecReader::Mode::kReadout, t);
+    r.poll(t);
+    iec_feed(r, "/SAT6TEST000000000001\r\n", &t);
+    uint8_t a = iec_block(r, "ER0007", &t);
+    for (uint32_t k = 0; k < 20000; k += 100) a |= r.poll(t + k);
+    CHECK((a & amis::IecReader::kFailed) && !(a & amis::IecReader::kSend));
+    CHECK(r.error() == amis::IecReader::Error::kMeterError);
+  }
+  // R20: a noise byte that looks like our ACK before STX must not swallow the data block
+  {
+    amis::IecReader r;
+    uint32_t t = 0;
+    iec_start_readout(r, &t);
+    r.push(0x86, t++);  // 0x06 with the parity bit
+    const uint8_t a = iec_block(r, "1.8.0(001234.567*kWh)\r\n!\r\n", &t);
+    CHECK((a & amis::IecReader::kDone) && r.verified() && strcmp(r.line().obis, "1.8.0") == 0);
+  }
+  // R3-4: an identification needs a valid baud rate character, and a long pause inside it starts over
+  {
+    amis::IecReader r;
+    uint32_t t = 0;
+    r.begin(amis::IecReader::Mode::kIdentOnly, t);
+    r.poll(t);
+    uint8_t a = iec_feed(r, "/ABCxNOISE\r\n", &t);
+    CHECK(a == 0 && r.active());
+    iec_feed(r, "/SAT", &t);
+    t += 2000;  // pause
+    a = iec_feed(r, "6XYZ\r\n", &t);
+    CHECK(a == 0 && r.active());
+    a = iec_feed(r, "/SAT6TEST000000000001\r\n", &t);
+    t += 800;
+    a |= r.poll(t);
+    CHECK((a & amis::IecReader::kDone) && strcmp(r.identification(), "TEST000000000001") == 0);
+  }
+  // R3-1: answer to the acknowledgement with a lost first character ("R0007", BCC no longer fits)
+  {
+    amis::IecReader r;
+    uint32_t t = 0;
+    iec_start_readout(r, &t);
+    uint8_t a = iec_block(r, "R0007", &t, false);
+    CHECK(!(a & amis::IecReader::kFailed) && r.active());
+    t += 7100;
+    a = r.poll(t);
+    CHECK(a == amis::IecReader::kSend);  // acknowledgement repeated
+    a = iec_block(r, "1.8.0(001234.567*kWh)\r\n!\r\n", &t);
+    CHECK(a & amis::IecReader::kDone);
+  }
+  // R3-2: an error telegram after data lines ends the readout instead of silently repeating it
+  {
+    amis::IecReader r;
+    uint32_t t = 0;
+    iec_start_readout(r, &t);
+    const uint8_t a = iec_block(r, "1.8.0(001234.567*kWh)\r\nER0001\r\n", &t);
+    CHECK((a & amis::IecReader::kFailed) && r.error() == amis::IecReader::Error::kMeterError);
+    // a BCC error after data lines stays a BCC error
+    amis::IecReader r2;
+    t = 0;
+    iec_start_readout(r2, &t);
+    const uint8_t b = iec_block(r2, "1.8.0(001234.567*kWh)\r\n!\r\n", &t, false);
+    CHECK((b & amis::IecReader::kFailed) && r2.error() == amis::IecReader::Error::kBcc && !r2.verified());
+  }
+  // R28: begin() clears the truncation flag of the previous readout
+  {
+    amis::IecReader r;
+    uint32_t t = 0;
+    iec_start_readout(r, &t);
+    char longline[140];
+    memset(longline, '9', sizeof(longline));
+    memcpy(longline, "1.8.0(", 6);
+    memcpy(longline + sizeof(longline) - 3, "\r\n", 3);
+    char body[200];
+    snprintf(body, sizeof(body), "%s", longline);
+    uint8_t a = iec_block(r, body, &t);
+    CHECK((a & amis::IecReader::kDone) && r.raw_line_truncated());
+    r.begin(amis::IecReader::Mode::kReadout, t);
+    CHECK(!r.raw_line_truncated() && r.truncated_lines() == 0);
+    r.abort();
+    CHECK(!r.active());
+  }
+}
+
+// Findings of the external review (0.4.0)
+static void test_reader_040() {
+  // R1: bytes after the encrypted part are not protected by the key and must not be parsed
+  if (amis::Reader::kMaxFrame >= sizeof(kFrame1) + 6) {
+    uint8_t f[sizeof(kFrame1) + 6];
+    memcpy(f, kFrame1, 99);
+    const uint8_t fake[6] = {0x04, 0x03, 0x01, 0x00, 0x00, 0x00};  // 1.8.0 = 1 Wh in plain text
+    memcpy(f + 99, fake, sizeof(fake));
+    f[1] = f[2] = static_cast<uint8_t>(kFrame1[1] + sizeof(fake));
+    uint8_t cs = 0;
+    for (size_t i = 4; i < sizeof(f) - 2; i++) cs = static_cast<uint8_t>(cs + f[i]);
+    f[sizeof(f) - 2] = cs;
+    f[sizeof(f) - 1] = 0x16;
+    amis::Reader r;
+    r.set_key_hex(kTestKeyHex);
+    int acks = 0;
+    const uint8_t st = feed(r, f, sizeof(f), 0, &acks);
+    CHECK((st & amis::Reader::kReading) && r.reading().energy_import_wh == 12345678);
+    size_t pn = 0;
+    r.last_plaintext(&pn);
+    CHECK(pn == 80);
+  }
+  // R2: header bytes form the IV -> a changed identification, version, medium or access number is rejected
+  {
+    const size_t pos[] = {7, 10, 13, 14, 15};  // id, id, version, medium, access number
+    for (size_t p : pos) {
+      uint8_t f[sizeof(kFrame1)];
+      memcpy(f, kFrame1, sizeof(f));
+      f[p] ^= 0x01;
+      frame_fix_checksum(f);
+      amis::Reader r;
+      r.set_key_hex(kTestKeyHex);
+      int acks = 0;
+      const uint8_t st = feed(r, f, sizeof(f), 0, &acks);
+      CHECK(!(st & amis::Reader::kReading) && acks == 1);
+      CHECK(r.last_error() == amis::Error::kHeader || r.last_error() == amis::Error::kWrongKey);
+      if (p != 15) CHECK(r.last_error() == amis::Error::kHeader);
+    }
+    // CBC bit flipping: a changed ciphertext block garbles its own plaintext block (caught by the layout check)
+    for (size_t blk = 0; blk < 5; blk++) {
+      uint8_t f[sizeof(kFrame1)];
+      memcpy(f, kFrame1, sizeof(f));
+      f[19 + 16 * blk + 10] ^= 0x01;  // would flip 1.7.0 in block 2 when blk = 1
+      frame_fix_checksum(f);
+      amis::Reader r;
+      r.set_key_hex(kTestKeyHex);
+      int acks = 0;
+      const uint8_t st = feed(r, f, sizeof(f), 0, &acks);
+      CHECK(!(st & amis::Reader::kReading) && acks == 1);
+      CHECK(r.last_error() == amis::Error::kHeader || (blk == 0 && r.last_error() == amis::Error::kWrongKey));
+    }
+  }
+  // R3: replay of an older frame (or the newest one with the FCB toggled) is rejected, still with E5
+  {
+    amis::Reader r;
+    r.set_key_hex(kTestKeyHex);
+    int acks = 0;
+    uint8_t st = feed(r, kFrame2, sizeof(kFrame2), 0, &acks);
+    CHECK(st & amis::Reader::kReading);
+    acks = 0;
+    st = feed(r, kFrame1, sizeof(kFrame1), 1000, &acks);  // older meter time
+    CHECK(st == (amis::Reader::kSendAck | amis::Reader::kError) && acks == 1);
+    CHECK(r.last_error() == amis::Error::kReplay && r.reading().access_number == 0x22);
+    feed(r, kSndNke, sizeof(kSndNke), 2000, &acks);  // a search request does not clear it
+    st = feed(r, kFrame1, sizeof(kFrame1), 3000, &acks);
+    CHECK((st & amis::Reader::kError) && r.last_error() == amis::Error::kReplay);
+    uint8_t f[sizeof(kFrame2)];  // newest frame with the FCB toggled: same time
+    memcpy(f, kFrame2, sizeof(f));
+    f[4] = 0x53;
+    frame_fix_checksum(f);
+    st = feed(r, f, sizeof(f), 4000, &acks);
+    CHECK((st & amis::Reader::kError) && r.last_error() == amis::Error::kReplay);
+    r.reset_replay_check();
+    st = feed(r, kFrame1, sizeof(kFrame1), 5000, &acks);
+    CHECK(st & amis::Reader::kReading);
+    amis::Reader r2;
+    r2.set_key_hex(kTestKeyHex);
+    r2.set_replay_check(false);
+    feed(r2, kFrame2, sizeof(kFrame2), 0, &acks);
+    st = feed(r2, kFrame1, sizeof(kFrame1), 1000, &acks);
+    CHECK(st & amis::Reader::kReading);
+  }
+  // R15/R26: a time record flagged invalid still counts as present (time.valid = false), kAll is met
+  {
+    uint8_t f[sizeof(kFrame1)], plain[80];
+    memcpy(f, kFrame1, sizeof(f));
+    frame_decrypt(f, plain);
+    plain[5] |= 0x80;  // type I byte 1: "invalid" bit
+    frame_encrypt(f, plain);
+    amis::Reader r;
+    r.set_key_hex(kTestKeyHex);
+    r.set_required_fields(amis::Reading::kAll);
+    int acks = 0;
+    const uint8_t st = feed(r, f, sizeof(f), 0, &acks);
+    CHECK((st & amis::Reader::kReading) && r.reading().has(amis::Reading::kTime) && !r.reading().time.valid);
+    CHECK(r.reading().energy_import_wh == 12345678);
+  }
+  // R16: days that do not exist
+  {
+    amis::DateTime t;
+    // year 2000 + yy: bits 0..2 of yy in byte 3 (bits 5..7), bits 3..6 in byte 4 (bits 4..7)
+    const uint8_t feb29_2028[6] = {0x00, 0x00, 0x0C, 0x1D | (4 << 5), 0x02 | (3 << 4), 0x09};  // yy = 28
+    CHECK(t.decode_type_i(feb29_2028) && t.year == 2028 && t.month == 2 && t.day == 29);
+    const uint8_t feb30_2026[6] = {0x00, 0x00, 0x0C, 0x1E | (2 << 5), 0x02 | (3 << 4), 0x09};  // 2026
+    CHECK(!t.decode_type_i(feb30_2026) && t.year == 2026);
+    const uint8_t feb29_2026[6] = {0x00, 0x00, 0x0C, 0x1D | (2 << 5), 0x02 | (3 << 4), 0x09};
+    CHECK(!t.decode_type_i(feb29_2026));
+    const uint8_t apr31_2026[6] = {0x00, 0x00, 0x0C, 0x1F | (2 << 5), 0x04 | (3 << 4), 0x09};
+    CHECK(!t.decode_type_i(apr31_2026));
+    const uint8_t apr30_2026[6] = {0x00, 0x00, 0x17, 0x1E | (2 << 5), 0x04 | (3 << 4), 0x09};
+    CHECK(t.decode_type_i(apr30_2026) && t.to_unix_utc() == 1777586400LL);  // 23:00 CET = 22:00 UTC
+  }
+  // R13: power balance without overflow
+  {
+    amis::Reading x;
+    x.power_import_w = 0x80000000u;
+    CHECK(x.power_balance_w() == INT32_MAX);
+    x.power_import_w = 0;
+    x.power_export_w = 0xFFFFFFFFu;
+    CHECK(x.power_balance_w() == INT32_MIN);
+    x.power_import_w = 5;
+    x.power_export_w = 7;
+    CHECK(x.power_balance_w() == -2);
+  }
+  // R27: no "plaintext" after errors before or during decryption
+  {
+    amis::Reader r;
+    r.set_key_hex("FFEEDDCCBBAA99887766554433221100");
+    int acks = 0;
+    feed(r, kFrame1, sizeof(kFrame1), 0, &acks);
+    size_t pn = 1;
+    r.last_plaintext(&pn);
+    CHECK(r.last_error() == amis::Error::kWrongKey && pn == 0);
+    amis::Reader r2;
+    feed(r2, kFrame1, sizeof(kFrame1), 0, &acks);
+    pn = 1;
+    r2.last_plaintext(&pn);
+    CHECK(r2.last_error() == amis::Error::kNoKey && pn == 0);
+  }
+  // R12: a reading older than about 24 days is forgotten, so online() cannot wrap after 49.7 days
+  {
+    amis::Reader r;
+    r.set_key_hex(kTestKeyHex);
+    int acks = 0;
+    feed(r, kFrame1, sizeof(kFrame1), 0, &acks);
+    CHECK(r.online(200));
+    r.push(0x00, 0x90000000u);  // any byte after a long time without readings
+    CHECK(!r.online(200));      // same value as 2^32 + 200 ms
+  }
+  // R24: error codes and addresses with plain frames (no key)
+  {
+    uint8_t f[300];
+    const uint8_t fill[4] = {0x2F, 0x2F, 0x2F, 0x2F};
+    const uint8_t e18[6] = {0x04, 0x03, 0x10, 0x00, 0x00, 0x00};
+    const uint8_t lvar[4] = {0x0D, 0x13, 0xC1, 0x12};  // LVAR 0xC1 (BCD) is not supported
+    struct Case {
+      uint8_t c, a, ci;
+      uint16_t cfg;
+      const uint8_t *d;
+      size_t n;
+      bool ack;
+      amis::Error e;
+    } cases[] = {
+        {0x53, 0xF0, 0x99, 0x0000, e18, sizeof(e18), true, amis::Error::kUnsupportedCi},
+        {0x53, 0xF0, 0x5B, 0x0700, e18, sizeof(e18), true, amis::Error::kUnsupportedEncryption},
+        {0x53, 0xF0, 0x5B, 0x0000, fill, sizeof(fill), true, amis::Error::kNoData},
+        {0x53, 0xF0, 0x5B, 0x0000, lvar, sizeof(lvar), true, amis::Error::kRecordFormat},
+        {0x53, 0xF0, 0x5B, 0x0510, e18, sizeof(e18), true, amis::Error::kNoKey},
+        {0x53, 0xFE, 0x5B, 0x0000, e18, sizeof(e18), true, amis::Error::kNone},   // broadcast with reply
+        {0x53, 0x01, 0x5B, 0x0000, e18, sizeof(e18), false, amis::Error::kNone},  // other address: no E5
+        {0x08, 0xF0, 0x5B, 0x0000, e18, sizeof(e18), false, amis::Error::kNone},  // RSP_UD: no E5
+    };
+    for (const Case &k : cases) {
+      const size_t n = build_frame(f, k.c, k.a, k.ci, k.cfg, 0x01, k.d, k.n);
+      amis::Reader r;
+      int acks = 0;
+      const uint8_t st = feed(r, f, n, 0, &acks);
+      CHECK(acks == (k.ack ? 1 : 0));
+      CHECK(r.last_error() == k.e);
+      if (k.e == amis::Error::kNone) CHECK((st & amis::Reader::kReading) && r.reading().energy_import_wh == 16);
+    }
+    // encrypted length 0 or longer than the data
+    uint8_t enc[16];
+    memset(enc, 0x2F, sizeof(enc));
+    const uint16_t bad_cfg[] = {0x0500, 0x0520};
+    for (uint16_t cfg : bad_cfg) {
+      const size_t n = build_frame(f, 0x53, 0xF0, 0x5B, cfg, 0x01, enc, sizeof(enc));
+      amis::Reader r;
+      r.set_key_hex(kTestKeyHex);
+      int acks = 0;
+      feed(r, f, n, 0, &acks);
+      CHECK(r.last_error() == amis::Error::kFrameFormat);
+    }
+    // too short for the long header
+    const uint8_t tiny[] = {0x68, 0x04, 0x04, 0x68, 0x53, 0xF0, 0x5B, 0x00, 0x9E, 0x16};
+    amis::Reader r;
+    int acks = 0;
+    feed(r, tiny, sizeof(tiny), 0, &acks);
+    CHECK(r.last_error() == amis::Error::kFrameFormat && acks == 1);
+    // primary address and inter-byte timeout setters
+    amis::Reader r2;
+    r2.set_primary_address(0x01);
+    const size_t n = build_frame(f, 0x53, 0x01, 0x5B, 0x0000, 0x01, e18, sizeof(e18));
+    acks = 0;
+    feed(r2, f, n, 0, &acks);
+    CHECK(acks == 1);
+    amis::Reader r3;
+    r3.set_interbyte_timeout_ms(5);
+    acks = 0;
+    feed(r3, f, 10, 0, &acks);
+    feed(r3, f + 10, n - 10, 100, &acks);
+    CHECK(acks == 0 && r3.stats().resyncs >= 1);
+    // every error has a text
+    for (int e = 0; e <= static_cast<int>(amis::Error::kReplay); e++)
+      CHECK(strcmp(amis::error_str(static_cast<amis::Error>(e)), "?") != 0);
+#ifndef LIBAMIS_NO_IEC
+    for (int e = 0; e <= static_cast<int>(amis::IecReader::Error::kMeterError); e++)
+      CHECK(strcmp(amis::error_str(static_cast<amis::IecReader::Error>(e)), "?") != 0);
+#endif
+  }
+}
+
 int main() {
   test_aes();
   test_datetime();
   test_frames();
   test_netzooe_example();
   test_reader_030();
+  test_reader_040();
   test_iec();
   test_iec_030();
+  test_iec_040();
   printf("%d checks passed, %d failed\n", g_ok, g_fail);
   return g_fail ? 1 : 0;
 }

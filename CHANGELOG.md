@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.4.0 – 2026-11-26
+
+Fixes from an external review of 0.3.1 (findings R1–R33).
+
+### Security (with a key set)
+
+OMS security mode 5 encrypts but has no MAC, and 0.3.1 trusted too much of the frame:
+
+- Bytes after the encrypted part were parsed as plain text, so a 1.8.0 record could simply be appended (R1).
+  Only the decrypted bytes are parsed now.
+- The CBC IV comes from the cleartext header, and a changed ciphertext block flips bits in the next plaintext
+  block, so the decrypted values could be changed without the key (R2). New `set_header_check()` (on by
+  default): the header must have the values Netz OÖ fixes (identification 0, 0x4C2D, 0x01, 0x0E) and the 80
+  decrypted bytes the record layout of the AMIS (Netz OÖ table 2), else the new `Error::kHeader`.
+- Older frames were accepted again (R3). New `set_replay_check()` (on by default): the meter time (UTC) must be
+  newer than that of the last accepted reading, else the new `Error::kReplay`; `reset_replay_check()`.
+
+### Breaking changes
+
+- With a key set, frames that do not look like an AMIS are rejected (see above); turn the checks off for other
+  meters. The test vectors now use the header of a real AMIS (identification 0).
+- `Reading::kTime` is set for every well-formed time record, also one the meter flags invalid; check
+  `time.valid`. Before, such a frame failed with `kIncomplete` under `set_required_fields(kAll)` (R15).
+- `IecReader`: the request is sent 4 times by default instead of 3, the last one 15 s after the first, so it
+  reliably reaches the meter after it has left the M-Bus session (R3-5).
+- `LIBAMIS_MAX_FRAME` and `LIBAMIS_NO_STATS` are part of the symbol names of `Reader` (inline namespace): a
+  translation unit built with other values fails to link instead of corrupting memory (R4). Set them as
+  build flags; `LIBAMIS_MAX_FRAME` must be a plain number.
+
+### Fixes
+
+- `Reader`:
+  - Guard against writing past the frame buffer if `reset()` runs concurrently; `Reader` and `IecReader` are
+    documented as not thread-safe (R5).
+  - `power_balance_w()` computes in 64 bits and saturates (no signed overflow, R13).
+  - `DateTime::to_unix_utc()` no longer overflows on targets with 16-bit `int` (R14).
+  - `DateTime::decode_type_i()` rejects days that do not exist (Feb 30, Apr 31, Feb 29 outside leap years, R16).
+  - A second time record no longer leaves a half-written time behind (R26).
+  - `online()` no longer reports a reading as fresh again after 49.7 days without readings (R12).
+  - `last_plaintext()` is empty after errors before or during decryption (R27).
+- `IecReader`:
+  - An STX after a byte that looked like the echo of our acknowledgement is no longer swallowed (R20).
+  - Without acknowledgement (`set_send_ack(false)`) an error telegram ends the readout with `kMeterError`
+    instead of sending the request again (R19).
+  - The identification needs a valid baud rate character, and a pause of more than 1.5 s inside it starts over:
+    M-Bus noise can no longer pass as an identification (R3-4).
+  - A refused acknowledgement whose error telegram lost its first character (block check fails, no data lines)
+    repeats the acknowledgement instead of failing with `kBcc` (R3-1).
+  - An error telegram after data lines ends the readout (`kMeterError`) instead of silently reading everything
+    again (R3-2).
+  - `begin()` clears `raw_line_truncated()` (R28).
+
+### New
+
+- `IecReader::verified()`: the block came with STX and its block check character matched (R7, R18).
+- `IecReader::serial_from_data()`: whether `serial_number()` is 0.0.0 or the identification (R29).
+
+### Examples, docs, CI
+
+- The examples follow the UART error rule (ESP-IDF event queue, Arduino-ESP32 `onReceiveError()` with a flag,
+  ESP8266 `hasOverrun()`), set `kAll` and use pins that do not collide with flash, PSRAM or console pins on C3,
+  C6 and S3 (R8, R22). The ESP8266 example explains `Serial.swap()` against boot and crash output on UART0 (R2-1).
+- README: IEC pattern fixed (handle the actions of every `push()` call, lines are provisional until `kDone`,
+  R6, R18), the E5 timing for backlogs and network bridges (R2-2, R2-4), `abort()` (R21), the request count
+  (R31), the ESP-IDF component folder name (R25). Header: inter-byte timeout semantics (R2-3, R11), the limits of
+  `line()` (R3-3), unsupported record types (R17).
+- CI: sanitizer findings are fatal (R10), the fuzzers run for 30 s per target (R23, now also with header and
+  replay checks off, primary address and inter-byte timeout), `tools/gen_sbox.py` checks all 256 entries of
+  both AES tables (R30), the PlatformIO platforms are pinned (R32).
+- Tests for all error codes, addresses 0xFE and foreign addresses, the setters and the new checks (R24).
+
 ## 0.3.1 – 2026-11-25
 
 ### Security
