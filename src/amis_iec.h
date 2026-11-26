@@ -74,6 +74,10 @@ class IecReader {
   // After a switch to a faster baud rate a repetition first returns kSetSerial alone (back to 300 Bd) and is then
   // sent as ACK 0 0 0 at 300 Bd.
   void set_ack_tries(uint8_t n) { ack_tries_ = n ? n : 1; }
+  // EXPERIMENTAL: repeat a refused acknowledgement with the fast baud rate code too instead of ACK 0 0 0
+  // (default off). A real TD-351x always refuses the first acknowledgement, so without this a readout never runs
+  // faster than 300 Bd there.
+  void set_repeat_fast_ack(bool on) { repeat_fast_ = on; }
   void set_ack_retry_ms(uint32_t ms) { ack_retry_ms_ = ms; }
   // Readout without acknowledgement (manual fig. 5-1): after the identification nothing is sent, the meter sends
   // the data at 300 Bd by itself after its timeout. An error telegram then ends the readout (kMeterError).
@@ -160,6 +164,7 @@ class IecReader {
   uint32_t ack_ms_ = 0;
   uint32_t wait_ms_ = 0;
   bool send_ack_ = true;
+  bool repeat_fast_ = false;
   bool no_stx_ = false;     // data block started without STX (no block check)
   bool uart_fast_ = false;  // the caller's UART is at a data baud rate above 300 Bd
   bool skip_echo_ = false;  // ignoring an echo of our acknowledgement up to LF

@@ -114,7 +114,9 @@ More: `online(now_ms)`, `stats()` (frames, acknowledgements, errors), `last_plai
   1.6.0/2.6.0 quarter-hour maximum demand current and previous periods, voltages/currents 32.7/31.7 …,
   historic values). By default everything runs at 300 baud and takes about 7 min. The meter only switches
   to a faster rate if the acknowledgement repeats the code from its identification (TD-351x: “6” = 19200),
-  so `set_max_baud_char('6')` is the only faster option.
+  so `set_max_baud_char('6')` is the only faster option. A real TD-351x refuses the first acknowledgement, so it
+  also needs `set_repeat_fast_ack(true)` (experimental), and the reading head must pass 19200 Bd: a simple head
+  with a slow phototransistor stage did not (details in docs/protocol.md).
 
 The request is sent up to 4 times, 5 s apart: the meter only wakes up its IEC mode with the first received
 character, and a real TD-3511 answers only after it has given up the M-Bus session (about 10 s). It refuses the

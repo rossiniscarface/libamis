@@ -205,6 +205,11 @@ Measured with a RAM trace on a reader at a real meter; it differs from the manua
   1.6.8 loses characters the same way. With the same data from a simulated meter nothing is lost. It always hits
   the first character of a line, so the cause is most likely in the meter or its optical transmitter.
 - The whole data set (about 12 KB, 379 lines) takes about 7 minutes at 300 baud; no M-Bus data during that time.
+- 19200 baud (tried 2026-11-26): the first `ACK 0 6 0` is refused with `ER0007` at **300** baud (seen as 9
+  garbage bytes at 19200). After the repeated `ACK 0 6 0` the meter does not send the data set at 300 baud, so
+  it switched to 19200 baud, but the reading head (phototransistor driving a pnp stage with 10 kΩ) delivered no
+  usable bytes at either rate. A faster IR receiver is needed for that; at 19200 baud the data set would take
+  about 6 s. The manual also names 115200 baud as supported (`9`, 5.2.1).
 - If a cumulation (end of a billing period) falls into the readout, the historic value numbers of the tariff
   registers can be inconsistent (manual 5.2.12.3); then the data set should be read again.
 

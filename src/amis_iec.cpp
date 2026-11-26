@@ -227,7 +227,7 @@ uint8_t IecReader::ack_due_(uint32_t now_ms) {
     // or ignored one at 300 Bd: switch back first and repeat it for 300 Bd (Z = '0', tx_ = ACK 0 Z 0 CR LF)
     uart_fast_ = false;
     baud_ = 300;
-    tx_[2] = '0';
+    if (!repeat_fast_) tx_[2] = '0';  // else ask for the fast rate again (sent at 300 Bd like the first one)
     state_ = State::kSendAck;
     state_ms_ = now_ms;
     wait_ms_ = 0;
@@ -237,6 +237,7 @@ uint8_t IecReader::ack_due_(uint32_t now_ms) {
   state_ms_ = now_ms;
   ack_ms_ = now_ms;
   skip_echo_ = false;
+  baud_ = baud_for_char(static_cast<char>(tx_[2]));  // the meter switches to Z after the acknowledgement
   if (baud_ == 300) return kSend;
   uart_fast_ = true;
   return static_cast<uint8_t>(kSend | kSetSerial);
@@ -415,7 +416,12 @@ uint8_t IecReader::poll(uint32_t now_ms) {
       }
       break;
     case State::kData:
-      if (static_cast<uint32_t>(now_ms - last_rx_ms_) > kCharTimeoutMs) return fail_(Error::kTimeout);
+      if (static_cast<uint32_t>(now_ms - last_rx_ms_) > kCharTimeoutMs) {
+        // Silence before the first data line: no data block, e.g. a refusal sent at 300 Bd while the UART is at the
+        // fast rate (it looks like a few garbage bytes, one of them can look like STX). Repeat the acknowledgement.
+        if (can_repeat_ack_()) return repeat_ack_();
+        return fail_(Error::kTimeout);
+      }
       break;
     case State::kWaitBcc:
       // the block check character is optional (manual 5.2.8): after ETX without BCC the data is complete, but

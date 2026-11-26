@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### New
+
+- `IecReader::set_repeat_fast_ack()` (experimental, default off): a refused acknowledgement is repeated with the
+  fast baud rate code too. A real TD-351x always refuses the first acknowledgement, so without it a readout never
+  runs faster than 300 Bd there. At a TD-3511 the meter switched to 19200 Bd on the repeated acknowledgement, but
+  a simple reading head (phototransistor with a slow transistor stage) passed no usable data at that rate.
+
+### Fixes
+
+- `IecReader`: a block that goes silent before its first data line (e.g. a refusal sent at 300 Bd while the UART
+  is at the fast rate, where one garbage byte can look like STX) repeats the acknowledgement instead of failing
+  with `kTimeout`.
+
 ## 0.4.0 – 2026-11-26
 
 Fixes from an external review of 0.3.1 (findings R1–R33).

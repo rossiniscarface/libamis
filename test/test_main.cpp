@@ -1019,6 +1019,58 @@ static void test_iec_040() {
     const uint8_t b = iec_block(r2, "1.8.0(001234.567*kWh)\r\n!\r\n", &t, false);
     CHECK((b & amis::IecReader::kFailed) && r2.error() == amis::IecReader::Error::kBcc && !r2.verified());
   }
+  // set_repeat_fast_ack(): a refused fast acknowledgement is repeated with the fast code again
+  for (int fast = 0; fast < 2; fast++) {
+    amis::IecReader r;
+    r.set_max_baud_char('6');
+    r.set_repeat_fast_ack(fast != 0);
+    uint32_t t = 0;
+    r.begin(amis::IecReader::Mode::kReadout, t);
+    r.poll(t);
+    iec_feed(r, "/SAT6TEST000000000001\r\n", &t);
+    t += 800;
+    uint8_t a = r.poll(t);
+    size_t n = 0;
+    const uint8_t *tx = r.tx(&n);
+    CHECK(a == (amis::IecReader::kSend | amis::IecReader::kSetSerial) && r.baud() == 19200 && tx[2] == '6');
+    t += 7100;  // no data at 19200: back to 300 Bd first
+    a = r.poll(t);
+    CHECK(a == amis::IecReader::kSetSerial && r.baud() == 300);
+    a = r.poll(t + 1);
+    tx = r.tx(&n);
+    if (fast) {
+      CHECK(a == (amis::IecReader::kSend | amis::IecReader::kSetSerial) && r.baud() == 19200 && tx[2] == '6');
+    } else {
+      CHECK(a == amis::IecReader::kSend && r.baud() == 300 && tx[2] == '0');
+    }
+    t += 2;
+    a = iec_block(r, "1.8.0(001234.567*kWh)\r\n!\r\n", &t);
+    CHECK((a & amis::IecReader::kDone) && r.verified());
+  }
+  // A refusal sent at 300 Bd seen at 19200 Bd: a few garbage bytes, one like STX, then silence -> repeat
+  {
+    amis::IecReader r;
+    r.set_max_baud_char('6');
+    r.set_repeat_fast_ack(true);
+    uint32_t t = 0;
+    r.begin(amis::IecReader::Mode::kReadout, t);
+    r.poll(t);
+    iec_feed(r, "/SAT6TEST000000000001\r\n", &t);
+    t += 800;
+    r.poll(t);
+    const uint32_t ack = t;
+    const uint8_t junk[] = {0x00, 0x82, 0x00, 0xF0, 0x00, 0x00, 0x80, 0x00, 0x00};
+    for (uint8_t b : junk) r.push(b, t++);
+    uint8_t a = r.poll(t + 2100);
+    CHECK(!(a & amis::IecReader::kFailed) && r.active());
+    a = r.poll(ack + 7100);
+    CHECK(a == amis::IecReader::kSetSerial && r.baud() == 300);
+    a = r.poll(ack + 7101);
+    CHECK(a == (amis::IecReader::kSend | amis::IecReader::kSetSerial) && r.baud() == 19200);
+    t = ack + 7200;
+    a = iec_block(r, "1.8.0(001234.567*kWh)\r\n!\r\n", &t);
+    CHECK((a & amis::IecReader::kDone) && r.verified());
+  }
   // R28: begin() clears the truncation flag of the previous readout
   {
     amis::IecReader r;
